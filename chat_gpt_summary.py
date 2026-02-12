@@ -1,6 +1,6 @@
 import json
 import csv
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections import Counter
 import os
 
@@ -160,7 +160,95 @@ if daily_records:
             print(f"  {rec.get('date')}: {rec.get('total_messages', 0):,} messages")
     except Exception:
         pass
+
+    # Analyze gaps (days with no messages)
+    if first_date and last_date:
+        # Get all dates with messages
+        dates_with_messages = set(datetime.fromisoformat(rec['date']).date() for rec in daily_records)
+
+        # Generate complete date range
+        start_date = first_date.date()
+        end_date = last_date.date()
+        total_days = (end_date - start_date).days + 1
+
+        # Find all days without messages
+        all_dates = []
+        current_date = start_date
+        while current_date <= end_date:
+            all_dates.append(current_date)
+            current_date += timedelta(days=1)
+
+        days_without_messages = [d for d in all_dates if d not in dates_with_messages]
+        num_days_without_messages = len(days_without_messages)
+        proportion_inactive = (num_days_without_messages / total_days * 100) if total_days > 0 else 0
+
+        # Find gaps (consecutive days without messages)
+        gaps = []
+        if days_without_messages:
+            days_without_messages.sort()
+            gap_start = days_without_messages[0]
+            gap_end = days_without_messages[0]
+
+            for i in range(1, len(days_without_messages)):
+                if days_without_messages[i] == gap_end + timedelta(days=1):
+                    # Extend current gap
+                    gap_end = days_without_messages[i]
+                else:
+                    # Save current gap and start new one
+                    gap_length = (gap_end - gap_start).days + 1
+                    gaps.append({
+                        'start_date': gap_start.isoformat(),
+                        'end_date': gap_end.isoformat(),
+                        'length_days': gap_length
+                    })
+                    gap_start = days_without_messages[i]
+                    gap_end = days_without_messages[i]
+
+            # Save the last gap
+            gap_length = (gap_end - gap_start).days + 1
+            gaps.append({
+                'start_date': gap_start.isoformat(),
+                'end_date': gap_end.isoformat(),
+                'length_days': gap_length
+            })
+
+        # Sort gaps by length (longest first)
+        gaps.sort(key=lambda g: g['length_days'], reverse=True)
+
+        # Save gaps to JSON and CSV
+        with open(f'{output_dir}/message_gaps.json', 'w') as f:
+            json.dump(gaps, f, indent=2)
+
+        with open(f'{output_dir}/message_gaps.csv', 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=['start_date', 'end_date', 'length_days'])
+            writer.writeheader()
+            writer.writerows(gaps)
+
+        # Print gap statistics
+        print(f"\n{'='*60}")
+        print(f"Inactivity Analysis")
+        print(f"{'='*60}")
+        print(f"Total Days in Range: {total_days:,}")
+        print(f"Days with Messages: {len(dates_with_messages):,}")
+        print(f"Days without Messages: {num_days_without_messages:,}")
+        print(f"Proportion Inactive: {proportion_inactive:.2f}%")
+
+        if gaps:
+            longest_gap = gaps[0]
+            print(f"\nLongest Gap: {longest_gap['length_days']:,} days")
+            print(f"  From: {longest_gap['start_date']}")
+            print(f"  To: {longest_gap['end_date']}")
+
+            # Display top 20 gaps
+            print(f"\nTop 20 Longest Gaps (No Messages):")
+            print(f"{'Rank':<6} {'Days':<8} {'Start Date':<12} {'End Date':<12}")
+            print(f"{'-'*60}")
+            for i, gap in enumerate(gaps[:20], 1):
+                print(f"{i:<6} {gap['length_days']:<8} {gap['start_date']:<12} {gap['end_date']:<12}")
+        else:
+            print("\nNo gaps found - you've messaged every day!")
 print(f"{'='*60}")
 print(f"\nAnalytics data has been saved to the '{output_dir}' directory:")
 print("1. chat_summaries.json/csv - Contains detailed information about each chat session")
 print("2. daily_stats.json/csv - Contains aggregated daily statistics")
+print("3. message_gaps.json/csv - Contains all gaps (consecutive days with no messages)")

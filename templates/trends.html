@@ -1,0 +1,319 @@
+{% extends "base.html" %}
+{% block title %}Trends — ChatGPT Statistics{% endblock %}
+
+{% block content %}
+<section class="chart-section fade-in">
+  <h2>Usage Trends</h2>
+
+  <div style="display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 20px;">
+    <div>
+      <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.08em;">Granularity</div>
+      <div class="pill-bar" id="granularity-pills"></div>
+    </div>
+    <div>
+      <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.08em;">Period</div>
+      <div class="pill-bar" id="year-pills"></div>
+    </div>
+  </div>
+
+  <div class="chart-box">
+    <h3>Chat Frequency</h3>
+    <canvas id="chart-chats"></canvas>
+  </div>
+  <div class="chart-box">
+    <h3>Average Messages per Chat</h3>
+    <canvas id="chart-avg-messages"></canvas>
+  </div>
+  <div class="chart-box">
+    <h3>Total Messages</h3>
+    <canvas id="chart-total-messages"></canvas>
+  </div>
+</section>
+
+<section class="chart-section fade-in">
+  <h2>Top Days</h2>
+  <div class="tables-grid">
+    <div class="table-box" id="top-chats-table"></div>
+    <div class="table-box" id="top-messages-table"></div>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+  var D = DASHBOARD_DATA;
+  if (!D.summary) return;
+
+  // ── Helpers ──
+  function formatDate(isoStr) {
+    var d = new Date(isoStr);
+    return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  }
+  function el(tag, attrs, children) {
+    var e = document.createElement(tag);
+    if (attrs) Object.keys(attrs).forEach(function(k) {
+      if (k === 'className') e.className = attrs[k];
+      else if (k === 'textContent') e.textContent = attrs[k];
+      else e.setAttribute(k, attrs[k]);
+    });
+    if (children) children.forEach(function(c) { if (c) e.appendChild(c); });
+    return e;
+  }
+  function txt(tag, text, cls) {
+    var e = document.createElement(tag);
+    e.textContent = text;
+    if (cls) e.className = cls;
+    return e;
+  }
+  function clearChildren(node) {
+    while (node.firstChild) node.removeChild(node.firstChild);
+  }
+
+  // ── Chart.js defaults ──
+  Chart.defaults.color = '#8a877e';
+  Chart.defaults.borderColor = '#2a2d3a';
+  Chart.defaults.font.family = "'DM Sans', sans-serif";
+  Chart.defaults.font.size = 11;
+
+  // ── State ──
+  var currentGranularity = 'weekly';
+  var currentYear = 'All';
+  var chartInstances = [];
+
+  // ── Data extraction by granularity ──
+  function getDatasets(granularity) {
+    if (granularity === 'daily') {
+      return {
+        dates: D.charts.dates,
+        chats: { values: D.charts.chats.values, lines: [
+          { label: '7-day avg', data: D.charts.chats.avg_7d, color: '#e06c6c' },
+          { label: '28-day avg', data: D.charts.chats.avg_28d, color: '#5cb870' },
+        ]},
+        avg_messages: { values: D.charts.avg_messages.values, lines: [
+          { label: '7-day avg', data: D.charts.avg_messages.avg_7d, color: '#e06c6c' },
+          { label: '28-day avg', data: D.charts.avg_messages.avg_28d, color: '#5cb870' },
+        ]},
+        total_messages: { values: D.charts.total_messages.values, lines: [
+          { label: '7-day avg', data: D.charts.total_messages.avg_7d, color: '#e06c6c' },
+          { label: '28-day avg', data: D.charts.total_messages.avg_28d, color: '#5cb870' },
+        ]},
+        timeUnit: 'month',
+        dateFormat: 'MMM yyyy',
+      };
+    } else if (granularity === 'weekly') {
+      return {
+        dates: D.weekly.weeks,
+        chats: { values: D.weekly.chats, lines: [
+          { label: '4-week avg', data: D.weekly.chats_avg_4w, color: '#e06c6c' },
+          { label: '12-week avg', data: D.weekly.chats_avg_12w, color: '#5cb870' },
+        ]},
+        avg_messages: { values: D.weekly.avg_messages, lines: [
+          { label: '4-week avg', data: D.weekly.avg_messages_avg_4w, color: '#e06c6c' },
+          { label: '12-week avg', data: D.weekly.avg_messages_avg_12w, color: '#5cb870' },
+        ]},
+        total_messages: { values: D.weekly.messages, lines: [
+          { label: '4-week avg', data: D.weekly.messages_avg_4w, color: '#e06c6c' },
+          { label: '12-week avg', data: D.weekly.messages_avg_12w, color: '#5cb870' },
+        ]},
+        timeUnit: 'month',
+        dateFormat: 'MMM yyyy',
+      };
+    } else { // monthly
+      return {
+        dates: D.monthly.months.map(function(m) { return m + '-01'; }),
+        chats: { values: D.monthly.chats, lines: [
+          { label: '3-month avg', data: D.monthly.chats_avg_3m, color: '#e06c6c' },
+        ]},
+        avg_messages: { values: D.monthly.avg_messages, lines: []},
+        total_messages: { values: D.monthly.messages, lines: [
+          { label: '3-month avg', data: D.monthly.messages_avg_3m, color: '#e06c6c' },
+        ]},
+        timeUnit: 'quarter',
+        dateFormat: 'MMM yyyy',
+      };
+    }
+  }
+
+  // ── Year filtering ──
+  function filterByYear(dates, arrays, year) {
+    if (year === 'All') return { dates: dates, arrays: arrays };
+    var filtered = { dates: [], arrays: arrays.map(function() { return []; }) };
+    for (var i = 0; i < dates.length; i++) {
+      if (dates[i].substring(0, 4) === year) {
+        filtered.dates.push(dates[i]);
+        for (var j = 0; j < arrays.length; j++) {
+          filtered.arrays[j].push(arrays[j][i]);
+        }
+      }
+    }
+    return filtered;
+  }
+
+  // ── Build a chart ──
+  function buildChart(canvasId, dates, barData, barColor, barLabel, lines) {
+    var ctx = document.getElementById(canvasId).getContext('2d');
+    var labels = dates.map(function(d) { return d.indexOf('T') >= 0 ? d : d + 'T00:00:00'; });
+
+    var datasets = [{
+      type: 'bar', label: barLabel, data: barData,
+      backgroundColor: barColor, borderWidth: 0,
+      barPercentage: 1.0, categoryPercentage: 1.0, order: 2,
+    }];
+
+    lines.forEach(function(s) {
+      datasets.push({
+        type: 'line', label: s.label, data: s.data,
+        borderColor: s.color, borderWidth: 2,
+        pointRadius: 0, pointHoverRadius: 3, tension: 0.3, order: 1,
+      });
+    });
+
+    var chart = new Chart(ctx, {
+      data: { labels: labels, datasets: datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { position: 'top', labels: { usePointStyle: true, pointStyle: 'circle', padding: 16, font: { size: 11 } } },
+          tooltip: {
+            backgroundColor: '#1e2029', borderColor: '#2a2d3a', borderWidth: 1,
+            titleFont: { family: "'JetBrains Mono', monospace", size: 11 },
+            bodyFont: { size: 12 }, padding: 10,
+            callbacks: {
+              title: function(items) { return items.length ? formatDate(items[0].label) : ''; }
+            }
+          },
+        },
+        scales: {
+          x: { type: 'time', time: { unit: 'month', displayFormats: { month: 'MMM yyyy', quarter: 'MMM yyyy' } },
+               grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 14 } },
+          y: { beginAtZero: true, grid: { color: '#1e2029' }, ticks: { precision: 0 } },
+        },
+      },
+    });
+
+    return chart;
+  }
+
+  // ── Render all charts ──
+  function renderCharts() {
+    // Destroy existing
+    chartInstances.forEach(function(c) { c.destroy(); });
+    chartInstances = [];
+
+    var ds = getDatasets(currentGranularity);
+
+    // Build arrays for year filtering
+    var allArrays = [
+      ds.chats.values,
+      ds.avg_messages.values,
+      ds.total_messages.values,
+    ];
+    // Also include line data
+    ds.chats.lines.forEach(function(l) { allArrays.push(l.data); });
+    ds.avg_messages.lines.forEach(function(l) { allArrays.push(l.data); });
+    ds.total_messages.lines.forEach(function(l) { allArrays.push(l.data); });
+
+    var f = filterByYear(ds.dates, allArrays, currentYear);
+    var idx = 0;
+
+    var chatsValues = f.arrays[idx++];
+    var avgMsgsValues = f.arrays[idx++];
+    var totalMsgsValues = f.arrays[idx++];
+
+    var chatsLines = ds.chats.lines.map(function(l) { return { label: l.label, data: f.arrays[idx++], color: l.color }; });
+    var avgMsgsLines = ds.avg_messages.lines.map(function(l) { return { label: l.label, data: f.arrays[idx++], color: l.color }; });
+    var totalMsgsLines = ds.total_messages.lines.map(function(l) { return { label: l.label, data: f.arrays[idx++], color: l.color }; });
+
+    chartInstances.push(buildChart('chart-chats', f.dates, chatsValues, 'rgba(108,180,217,0.5)', 'Chats', chatsLines));
+    chartInstances.push(buildChart('chart-avg-messages', f.dates, avgMsgsValues, 'rgba(92,184,112,0.5)', 'Avg Messages/Chat', avgMsgsLines));
+    chartInstances.push(buildChart('chart-total-messages', f.dates, totalMsgsValues, 'rgba(224,138,122,0.5)', 'Messages', totalMsgsLines));
+  }
+
+  // ── Pill Bars ──
+  function createPills(containerId, options, defaultVal, onChange) {
+    var bar = document.getElementById(containerId);
+    options.forEach(function(opt) {
+      var pill = txt('span', opt, 'pill' + (opt === defaultVal ? ' active' : ''));
+      pill.addEventListener('click', function() {
+        bar.querySelectorAll('.pill').forEach(function(p) { p.classList.remove('active'); });
+        pill.classList.add('active');
+        onChange(opt);
+      });
+      bar.appendChild(pill);
+    });
+  }
+
+  createPills('granularity-pills', ['Daily', 'Weekly', 'Monthly'], 'Weekly', function(val) {
+    currentGranularity = val.toLowerCase();
+    renderCharts();
+  });
+
+  var years = ['All'];
+  // Auto-detect years from the data
+  if (D.charts && D.charts.dates) {
+    var yearSet = {};
+    D.charts.dates.forEach(function(d) { yearSet[d.substring(0, 4)] = true; });
+    Object.keys(yearSet).sort().forEach(function(y) { years.push(y); });
+  }
+
+  createPills('year-pills', years, 'All', function(val) {
+    currentYear = val;
+    renderCharts();
+    renderTopTables();
+  });
+
+  // Initial render
+  renderCharts();
+
+  // ── Top Days Tables ──
+  var TOP_DAYS_LIMIT = 10;
+
+  function filterTableByYear(rows, year, dateKey) {
+    if (year === 'All') return rows;
+    return rows.filter(function(r) { return r[dateKey].substring(0, 4) === year; });
+  }
+
+  function renderTopTable(containerId, title, rows, valueKey, valueLabel) {
+    var container = document.getElementById(containerId);
+    clearChildren(container);
+    container.appendChild(txt('h3', title));
+
+    var table = document.createElement('table');
+    var thead = document.createElement('thead');
+    var headerRow = document.createElement('tr');
+    headerRow.appendChild(txt('th', '#'));
+    headerRow.appendChild(txt('th', 'Date'));
+    headerRow.appendChild(txt('th', valueLabel, 'num-col'));
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+
+    var tbody = document.createElement('tbody');
+    var filtered = filterTableByYear(rows, currentYear, 'date').slice(0, TOP_DAYS_LIMIT);
+    filtered.forEach(function(r, i) {
+      var tr = document.createElement('tr');
+      tr.appendChild(txt('td', String(i + 1), 'rank'));
+      tr.appendChild(txt('td', r.date, 'date'));
+      tr.appendChild(txt('td', r[valueKey].toLocaleString(), 'num'));
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    container.appendChild(table);
+  }
+
+  function renderTopTables() {
+    var s = D.summary;
+    if (s.top_days_by_chats && s.top_days_by_chats.length) {
+      renderTopTable('top-chats-table', 'Top Days by Chats', s.top_days_by_chats, 'total_chats', 'Chats');
+    }
+    if (s.top_days_by_messages && s.top_days_by_messages.length) {
+      renderTopTable('top-messages-table', 'Top Days by Messages', s.top_days_by_messages, 'total_messages', 'Messages');
+    }
+  }
+
+  renderTopTables();
+
+})();
+</script>
+{% endblock %}

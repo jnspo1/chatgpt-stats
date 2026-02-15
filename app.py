@@ -15,20 +15,23 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+from starlette.requests import Request
 
 from analytics import build_dashboard_payload
 
 logger = logging.getLogger(__name__)
 
 CONVERSATIONS_PATH = Path(__file__).parent / "conversations.json"
-TEMPLATE_PATH = Path(__file__).parent / "dashboard_template.html"
 CACHE_TTL_SECONDS = 3600  # 1 hour
-DATA_PLACEHOLDER = "const DASHBOARD_DATA = {};"
 
 app = FastAPI(
     title="ChatGPT Statistics Dashboard",
     root_path="/chatgpt_stats",
 )
+
+TEMPLATES_DIR = Path(__file__).parent / "templates"
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 _cache_lock = threading.Lock()
 _cache: dict[str, Any] = {
@@ -82,27 +85,37 @@ def healthz():
 
 
 @app.get("/", response_class=HTMLResponse)
-def dashboard_html():
-    """Serve the dashboard HTML with injected data."""
-    try:
-        template = TEMPLATE_PATH.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Dashboard template not found at {TEMPLATE_PATH}",
-        )
-
-    if DATA_PLACEHOLDER not in template:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Dashboard template is missing the data placeholder '{DATA_PLACEHOLDER}'",
-        )
-
+def overview(request: Request):
+    """Serve the overview dashboard page."""
     data = _get_cached_data()
-    data_json = json.dumps(data, ensure_ascii=False)
-    data_json = data_json.replace("</", r"<\/")
-    html = template.replace(DATA_PLACEHOLDER, f"const DASHBOARD_DATA = {data_json};")
-    return HTMLResponse(content=html)
+    data_json = json.dumps(data, ensure_ascii=False).replace("</", r"<\/")
+    return templates.TemplateResponse(
+        "overview.html",
+        {"request": request, "data_json": data_json, "page": "overview"},
+    )
+
+
+
+@app.get("/trends", response_class=HTMLResponse)
+def trends(request: Request):
+    """Serve the trends page."""
+    data = _get_cached_data()
+    data_json = json.dumps(data, ensure_ascii=False).replace("</", r"<\/")
+    return templates.TemplateResponse(
+        "trends.html",
+        {"request": request, "data_json": data_json, "page": "trends"},
+    )
+
+
+@app.get("/patterns", response_class=HTMLResponse)
+def patterns(request: Request):
+    """Serve the patterns page."""
+    data = _get_cached_data()
+    data_json = json.dumps(data, ensure_ascii=False).replace("</", r"<\/")
+    return templates.TemplateResponse(
+        "patterns.html",
+        {"request": request, "data_json": data_json, "page": "patterns"},
+    )
 
 
 @app.get("/api/data")

@@ -273,6 +273,186 @@ def compute_chart_data(daily_records: list[dict]) -> dict[str, Any]:
     }
 
 
+def compute_monthly_data(daily_records: list[dict]) -> dict[str, Any]:
+    """Aggregate daily records into monthly buckets for the overview chart."""
+    sorted_records = sorted(daily_records, key=lambda r: r["date"])
+
+    monthly: dict[str, dict] = {}
+    for r in sorted_records:
+        month = r["date"][:7]  # "YYYY-MM"
+        if month not in monthly:
+            monthly[month] = {"chats": 0, "messages": 0, "total_msgs_raw": 0, "total_chats_raw": 0}
+        monthly[month]["chats"] += r["total_chats"]
+        monthly[month]["messages"] += r["total_messages"]
+        monthly[month]["total_msgs_raw"] += r["total_messages"]
+        monthly[month]["total_chats_raw"] += r["total_chats"]
+
+    months = sorted(monthly.keys())
+    chats = [monthly[m]["chats"] for m in months]
+    messages = [monthly[m]["messages"] for m in months]
+    avg_messages = [
+        round(monthly[m]["total_msgs_raw"] / monthly[m]["total_chats_raw"], 2)
+        if monthly[m]["total_chats_raw"] > 0 else 0
+        for m in months
+    ]
+
+    return {
+        "months": months,
+        "chats": chats,
+        "messages": messages,
+        "avg_messages": avg_messages,
+        "chats_avg_3m": [round(v, 2) for v in _rolling_avg([float(c) for c in chats], 3)],
+        "messages_avg_3m": [round(v, 2) for v in _rolling_avg([float(m) for m in messages], 3)],
+    }
+
+
+def compute_weekly_data(daily_records: list[dict]) -> dict[str, Any]:
+    """Aggregate daily records into ISO-week buckets for the trends page."""
+    from datetime import date as date_type
+
+    sorted_records = sorted(daily_records, key=lambda r: r["date"])
+
+    weekly: dict[str, dict] = {}
+    for r in sorted_records:
+        d = date_type.fromisoformat(r["date"])
+        iso = d.isocalendar()
+        week_key = f"{iso[0]}-W{iso[1]:02d}"
+        monday = d - timedelta(days=d.weekday())
+        if week_key not in weekly:
+            weekly[week_key] = {"monday": monday.isoformat(), "chats": 0, "messages": 0, "total_msgs": 0, "total_chats": 0}
+        weekly[week_key]["chats"] += r["total_chats"]
+        weekly[week_key]["messages"] += r["total_messages"]
+        weekly[week_key]["total_msgs"] += r["total_messages"]
+        weekly[week_key]["total_chats"] += r["total_chats"]
+
+    sorted_keys = sorted(weekly.keys())
+    weeks = [weekly[k]["monday"] for k in sorted_keys]
+    chats = [weekly[k]["chats"] for k in sorted_keys]
+    messages = [weekly[k]["messages"] for k in sorted_keys]
+    avg_messages = [
+        round(weekly[k]["total_msgs"] / weekly[k]["total_chats"], 2)
+        if weekly[k]["total_chats"] > 0 else 0
+        for k in sorted_keys
+    ]
+
+    return {
+        "weeks": weeks,
+        "chats": chats,
+        "messages": messages,
+        "avg_messages": avg_messages,
+        "chats_avg_4w": [round(v, 2) for v in _rolling_avg([float(c) for c in chats], 4)],
+        "chats_avg_12w": [round(v, 2) for v in _rolling_avg([float(c) for c in chats], 12)],
+        "messages_avg_4w": [round(v, 2) for v in _rolling_avg([float(m) for m in messages], 4)],
+        "messages_avg_12w": [round(v, 2) for v in _rolling_avg([float(m) for m in messages], 12)],
+        "avg_messages_avg_4w": [round(v, 2) for v in _rolling_avg([float(a) for a in avg_messages], 4)],
+        "avg_messages_avg_12w": [round(v, 2) for v in _rolling_avg([float(a) for a in avg_messages], 12)],
+    }
+
+
+def compute_hourly_data(timestamps: list[datetime]) -> dict[str, Any]:
+    """Compute hour-of-day x day-of-week activity grid from timestamps."""
+    heatmap = [[0] * 24 for _ in range(7)]  # [weekday][hour]
+    hourly_totals = [0] * 24
+    weekday_totals = [0] * 7
+
+    for ts in timestamps:
+        weekday = ts.weekday()  # 0=Monday
+        hour = ts.hour
+        heatmap[weekday][hour] += 1
+        hourly_totals[hour] += 1
+        weekday_totals[weekday] += 1
+
+    return {
+        "heatmap": heatmap,
+        "hourly_totals": hourly_totals,
+        "weekday_totals": weekday_totals,
+    }
+
+
+_LENGTH_BUCKETS = [
+    ("1-2", 1, 2),
+    ("3-5", 3, 5),
+    ("6-10", 6, 10),
+    ("11-20", 11, 20),
+    ("21-50", 21, 50),
+    ("50+", 51, float("inf")),
+]
+
+
+def compute_length_distribution(summaries: list[dict]) -> dict[str, Any]:
+    """Bucket conversation lengths into a histogram distribution."""
+    counts = [0] * len(_LENGTH_BUCKETS)
+    for s in summaries:
+        mc = s["message_count"]
+        for i, (_, lo, hi) in enumerate(_LENGTH_BUCKETS):
+            if lo <= mc <= hi:
+                counts[i] += 1
+                break
+    return {
+        "buckets": [b[0] for b in _LENGTH_BUCKETS],
+        "counts": counts,
+    }
+
+
+def compute_period_comparison(
+    daily_records: list[dict],
+    reference_date: str | None = None,
+) -> dict[str, Any]:
+    """Compute month-over-month and year-over-year comparison stats."""
+    from datetime import date as date_type
+
+    if reference_date:
+        ref = date_type.fromisoformat(reference_date)
+    else:
+        ref = date_type.today()
+
+    this_month = f"{ref.year}-{ref.month:02d}"
+    if ref.month == 1:
+        last_month = f"{ref.year - 1}-12"
+    else:
+        last_month = f"{ref.year}-{ref.month - 1:02d}"
+    this_year = str(ref.year)
+    last_year = str(ref.year - 1)
+
+    def _zero():
+        return {"chats": 0, "messages": 0, "total_msgs": 0, "total_chats": 0}
+
+    buckets = {
+        "this_month": _zero(),
+        "last_month": _zero(),
+        "this_year": _zero(),
+        "last_year": _zero(),
+    }
+
+    for r in daily_records:
+        d = r["date"]
+        m = d[:7]
+        y = d[:4]
+        for key, match_val, match_field in [
+            ("this_month", this_month, m),
+            ("last_month", last_month, m),
+            ("this_year", this_year, y),
+            ("last_year", last_year, y),
+        ]:
+            if match_field == match_val:
+                buckets[key]["chats"] += r["total_chats"]
+                buckets[key]["messages"] += r["total_messages"]
+                buckets[key]["total_msgs"] += r["total_messages"]
+                buckets[key]["total_chats"] += r["total_chats"]
+
+    result = {}
+    for key in ["this_month", "last_month", "this_year", "last_year"]:
+        b = buckets[key]
+        avg = round(b["total_msgs"] / b["total_chats"], 2) if b["total_chats"] > 0 else 0
+        result[key] = {
+            "chats": b["chats"],
+            "messages": b["messages"],
+            "avg_messages": avg,
+        }
+
+    return result
+
+
 def _top_records_per_year(records: list[dict], per_year: int = 10) -> list[dict]:
     """Return top *per_year* records for each calendar year, preserving sort order.
 
@@ -311,8 +491,8 @@ def _top_gaps_per_year(gaps: list[dict], per_year: int = 25) -> list[dict]:
 def build_dashboard_payload(path: str = "conversations.json") -> dict[str, Any]:
     """One-call entry point: load, process, compute all stats for the dashboard.
 
-    Returns dict with keys: generated_at, summary, charts, gaps (top 20),
-    gap_stats.
+    Returns dict with keys: generated_at, summary, charts, gaps (top 25/year),
+    gap_stats, monthly, weekly, hourly, length_distribution, comparison.
     """
     convos = load_conversations(path)
     summaries, records, timestamps = process_conversations(convos)
@@ -332,6 +512,11 @@ def build_dashboard_payload(path: str = "conversations.json") -> dict[str, Any]:
             "proportion_inactive": gap_data["proportion_inactive"],
             "longest_gap": gap_data["longest_gap"],
         },
+        "monthly": compute_monthly_data(records),
+        "weekly": compute_weekly_data(records),
+        "hourly": compute_hourly_data(timestamps),
+        "length_distribution": compute_length_distribution(summaries),
+        "comparison": compute_period_comparison(records),
     }
 
 

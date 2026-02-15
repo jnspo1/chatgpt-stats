@@ -12,7 +12,12 @@ from analytics import (
     build_dashboard_payload,
     compute_chart_data,
     compute_gap_analysis,
+    compute_hourly_data,
+    compute_length_distribution,
+    compute_monthly_data,
+    compute_period_comparison,
     compute_summary_stats,
+    compute_weekly_data,
     print_summary_report,
     process_conversations,
     save_analytics_files,
@@ -298,6 +303,180 @@ class TestComputeChartData:
         assert chart["total_messages"]["avg_lifetime"] == [10.0, 15.0]
 
 
+# ── TestComputeMonthlyData ──────────────────
+
+
+class TestComputeMonthlyData:
+    def test_basic_aggregation(self):
+        records = [
+            {"date": "2024-01-15", "total_messages": 10, "total_chats": 2, "avg_messages_per_chat": 5.0, "max_messages_in_chat": 6},
+            {"date": "2024-01-20", "total_messages": 8, "total_chats": 1, "avg_messages_per_chat": 8.0, "max_messages_in_chat": 8},
+            {"date": "2024-02-05", "total_messages": 5, "total_chats": 3, "avg_messages_per_chat": 1.67, "max_messages_in_chat": 2},
+        ]
+        result = compute_monthly_data(records)
+        assert result["months"] == ["2024-01", "2024-02"]
+        assert result["chats"] == [3, 3]
+        assert result["messages"] == [18, 5]
+
+    def test_avg_messages_per_chat(self):
+        records = [
+            {"date": "2024-01-10", "total_messages": 10, "total_chats": 2, "avg_messages_per_chat": 5.0, "max_messages_in_chat": 6},
+            {"date": "2024-01-20", "total_messages": 6, "total_chats": 3, "avg_messages_per_chat": 2.0, "max_messages_in_chat": 3},
+        ]
+        result = compute_monthly_data(records)
+        assert result["avg_messages"] == [pytest.approx(3.2)]
+
+    def test_empty_records(self):
+        result = compute_monthly_data([])
+        assert result["months"] == []
+        assert result["chats"] == []
+
+    def test_rolling_avg_3m(self):
+        records = [
+            {"date": "2024-01-15", "total_messages": 10, "total_chats": 1, "avg_messages_per_chat": 10.0, "max_messages_in_chat": 10},
+            {"date": "2024-02-15", "total_messages": 20, "total_chats": 2, "avg_messages_per_chat": 10.0, "max_messages_in_chat": 12},
+            {"date": "2024-03-15", "total_messages": 30, "total_chats": 3, "avg_messages_per_chat": 10.0, "max_messages_in_chat": 15},
+        ]
+        result = compute_monthly_data(records)
+        assert result["chats_avg_3m"] == [1.0, 1.5, 2.0]
+
+
+# ── TestComputeWeeklyData ─────────────────
+
+
+class TestComputeWeeklyData:
+    def test_basic_aggregation(self):
+        # Mon Jan 15 and Tue Jan 16 are same ISO week (2024-W03)
+        # Mon Jan 22 is next week (2024-W04)
+        records = [
+            {"date": "2024-01-15", "total_messages": 10, "total_chats": 2, "avg_messages_per_chat": 5.0, "max_messages_in_chat": 6},
+            {"date": "2024-01-16", "total_messages": 8, "total_chats": 1, "avg_messages_per_chat": 8.0, "max_messages_in_chat": 8},
+            {"date": "2024-01-22", "total_messages": 5, "total_chats": 3, "avg_messages_per_chat": 1.67, "max_messages_in_chat": 2},
+        ]
+        result = compute_weekly_data(records)
+        assert len(result["weeks"]) == 2
+        assert result["chats"] == [3, 3]
+        assert result["messages"] == [18, 5]
+
+    def test_empty_records(self):
+        result = compute_weekly_data([])
+        assert result["weeks"] == []
+
+    def test_has_rolling_averages(self):
+        records = [
+            {"date": f"2024-01-{d:02d}", "total_messages": d, "total_chats": 1, "avg_messages_per_chat": float(d), "max_messages_in_chat": d}
+            for d in range(1, 29)  # 4 weeks of data
+        ]
+        result = compute_weekly_data(records)
+        assert len(result["chats_avg_4w"]) == len(result["weeks"])
+        assert len(result["chats_avg_12w"]) == len(result["weeks"])
+
+
+# ── TestComputeHourlyData ─────────────────
+
+
+class TestComputeHourlyData:
+    def test_heatmap_dimensions(self):
+        ts = [
+            datetime(2024, 1, 15, 10, 30),  # Monday, hour 10
+            datetime(2024, 1, 15, 10, 45),  # Monday, hour 10
+            datetime(2024, 1, 16, 14, 0),   # Tuesday, hour 14
+        ]
+        result = compute_hourly_data(ts)
+        assert len(result["heatmap"]) == 7
+        assert len(result["heatmap"][0]) == 24
+        assert result["heatmap"][0][10] == 2  # Monday, hour 10
+        assert result["heatmap"][1][14] == 1  # Tuesday, hour 14
+
+    def test_hourly_totals(self):
+        ts = [
+            datetime(2024, 1, 15, 10, 30),
+            datetime(2024, 1, 16, 10, 0),
+            datetime(2024, 1, 17, 14, 0),
+        ]
+        result = compute_hourly_data(ts)
+        assert result["hourly_totals"][10] == 2
+        assert result["hourly_totals"][14] == 1
+        assert len(result["hourly_totals"]) == 24
+
+    def test_empty_timestamps(self):
+        result = compute_hourly_data([])
+        assert len(result["heatmap"]) == 7
+        assert all(all(v == 0 for v in row) for row in result["heatmap"])
+
+    def test_weekday_totals(self):
+        ts = [
+            datetime(2024, 1, 15, 10, 0),  # Monday
+            datetime(2024, 1, 15, 11, 0),  # Monday
+            datetime(2024, 1, 20, 10, 0),  # Saturday
+        ]
+        result = compute_hourly_data(ts)
+        assert result["weekday_totals"][0] == 2  # Monday
+        assert result["weekday_totals"][5] == 1  # Saturday
+
+
+# ── TestComputeLengthDistribution ─────────
+
+
+class TestComputeLengthDistribution:
+    def test_basic_buckets(self):
+        summaries = [
+            {"message_count": 1},
+            {"message_count": 2},
+            {"message_count": 5},
+            {"message_count": 10},
+            {"message_count": 15},
+            {"message_count": 30},
+            {"message_count": 75},
+        ]
+        result = compute_length_distribution(summaries)
+        assert result["buckets"] == ["1-2", "3-5", "6-10", "11-20", "21-50", "50+"]
+        assert result["counts"] == [2, 1, 1, 1, 1, 1]
+
+    def test_empty(self):
+        result = compute_length_distribution([])
+        assert result["counts"] == [0, 0, 0, 0, 0, 0]
+
+    def test_all_in_one_bucket(self):
+        summaries = [{"message_count": 1}, {"message_count": 2}, {"message_count": 1}]
+        result = compute_length_distribution(summaries)
+        assert result["counts"][0] == 3
+        assert sum(result["counts"]) == 3
+
+
+# ── TestComputePeriodComparison ───────────
+
+
+class TestComputePeriodComparison:
+    def test_month_comparison(self):
+        records = [
+            {"date": "2024-01-15", "total_messages": 10, "total_chats": 2, "avg_messages_per_chat": 5.0, "max_messages_in_chat": 6},
+            {"date": "2024-01-20", "total_messages": 8, "total_chats": 1, "avg_messages_per_chat": 8.0, "max_messages_in_chat": 8},
+            {"date": "2024-02-05", "total_messages": 20, "total_chats": 5, "avg_messages_per_chat": 4.0, "max_messages_in_chat": 6},
+        ]
+        result = compute_period_comparison(records, reference_date="2024-02-15")
+        assert result["this_month"]["chats"] == 5
+        assert result["this_month"]["messages"] == 20
+        assert result["last_month"]["chats"] == 3
+        assert result["last_month"]["messages"] == 18
+
+    def test_year_comparison(self):
+        records = [
+            {"date": "2023-06-15", "total_messages": 100, "total_chats": 10, "avg_messages_per_chat": 10.0, "max_messages_in_chat": 15},
+            {"date": "2024-03-15", "total_messages": 50, "total_chats": 5, "avg_messages_per_chat": 10.0, "max_messages_in_chat": 12},
+        ]
+        result = compute_period_comparison(records, reference_date="2024-06-15")
+        assert result["this_year"]["chats"] == 5
+        assert result["last_year"]["chats"] == 10
+
+    def test_empty_periods(self):
+        result = compute_period_comparison([], reference_date="2024-02-15")
+        assert result["this_month"]["chats"] == 0
+        assert result["last_month"]["chats"] == 0
+        assert result["this_year"]["chats"] == 0
+        assert result["last_year"]["chats"] == 0
+
+
 # ── TestRollingAvg ──────────────────────────
 
 
@@ -434,3 +613,14 @@ class TestBuildDashboardPayload:
         # Verify chart sub-keys exist
         assert "avg_7d" in payload["charts"]["chats"]
         assert "avg_lifetime" in payload["charts"]["total_messages"]
+
+        # New multi-page data
+        assert "monthly" in payload
+        assert "weekly" in payload
+        assert "hourly" in payload
+        assert "length_distribution" in payload
+        assert "comparison" in payload
+
+        assert len(payload["monthly"]["months"]) >= 1
+        assert len(payload["hourly"]["heatmap"]) == 7
+        assert len(payload["length_distribution"]["buckets"]) == 6

@@ -208,8 +208,8 @@ def compute_summary_stats(
         "first_date": first_date,
         "last_date": last_date,
         "years_span": years_span,
-        "top_days_by_chats": sorted_by_chats[:5],
-        "top_days_by_messages": sorted_by_messages[:5],
+        "top_days_by_chats": _top_records_per_year(sorted_by_chats),
+        "top_days_by_messages": _top_records_per_year(sorted_by_messages),
     }
 
 
@@ -273,6 +273,41 @@ def compute_chart_data(daily_records: list[dict]) -> dict[str, Any]:
     }
 
 
+def _top_records_per_year(records: list[dict], per_year: int = 10) -> list[dict]:
+    """Return top *per_year* records for each calendar year, preserving sort order.
+
+    Records are already sorted by the desired ranking field (descending).
+    Collects up to *per_year* per year, then returns the merged list
+    in the original sort order.
+    """
+    buckets: dict[str, int] = {}
+    result = []
+    for r in records:
+        yr = r["date"][:4]
+        count = buckets.get(yr, 0)
+        if count < per_year:
+            result.append(r)
+            buckets[yr] = count + 1
+    return result
+
+
+def _top_gaps_per_year(gaps: list[dict], per_year: int = 25) -> list[dict]:
+    """Return top *per_year* gaps for each calendar year, merged and sorted.
+
+    Gaps are already sorted longest-first.  We collect up to *per_year*
+    for each year (based on start_timestamp), merge, and re-sort descending.
+    """
+    buckets: dict[str, list[dict]] = {}
+    for g in gaps:
+        yr = g["start_timestamp"][:4]
+        bucket = buckets.setdefault(yr, [])
+        if len(bucket) < per_year:
+            bucket.append(g)
+    merged = [g for bucket in buckets.values() for g in bucket]
+    merged.sort(key=lambda g: g["length_days"], reverse=True)
+    return merged
+
+
 def build_dashboard_payload(path: str = "conversations.json") -> dict[str, Any]:
     """One-call entry point: load, process, compute all stats for the dashboard.
 
@@ -289,7 +324,7 @@ def build_dashboard_payload(path: str = "conversations.json") -> dict[str, Any]:
         "generated_at": datetime.now().isoformat(),
         "summary": stats,
         "charts": charts,
-        "gaps": gap_data["gaps"][:20],
+        "gaps": _top_gaps_per_year(gap_data["gaps"], per_year=25),
         "gap_stats": {
             "total_days": gap_data["total_days"],
             "days_active": gap_data["days_active"],

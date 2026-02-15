@@ -436,6 +436,16 @@ const DASHBOARD_DATA = {};
   }
 
   // ── Top Days Tables ──────────────────────
+  var TOP_DAYS_LIMIT = 5;
+  var TOP_GAPS_LIMIT = 20;
+
+  function filterByYear(rows, year, dateKey) {
+    if (year === 'All') return rows;
+    return rows.filter(function(r) {
+      return r[dateKey].substring(0, 4) === year;
+    });
+  }
+
   function renderTopTable(containerId, title, rows, valueKey, valueLabel) {
     var container = document.getElementById(containerId);
     container.appendChild(txt('h3', title));
@@ -444,13 +454,10 @@ const DASHBOARD_DATA = {};
 
     function renderRows(year) {
       clearChildren(tbody);
-      var rank = 0;
-      rows.forEach(function(r) {
-        var rowYear = r.date.substring(0, 4);
-        if (year !== 'All' && rowYear !== year) return;
-        rank++;
+      var filtered = filterByYear(rows, year, 'date').slice(0, TOP_DAYS_LIMIT);
+      filtered.forEach(function(r, i) {
         var tr = document.createElement('tr');
-        tr.appendChild(txt('td', String(rank), 'rank'));
+        tr.appendChild(txt('td', String(i + 1), 'rank'));
         tr.appendChild(txt('td', r.date, 'date'));
         tr.appendChild(txt('td', r[valueKey].toLocaleString(), 'num'));
         tbody.appendChild(tr);
@@ -483,7 +490,7 @@ const DASHBOARD_DATA = {};
   // ── Gap Analysis Table ───────────────────
   var gapsEl = document.getElementById('gaps-table');
   if (D.gaps && D.gaps.length) {
-    var titleEl = txt('h3', 'Top 20 Longest Gaps');
+    var titleEl = txt('h3', 'Longest Gaps');
     if (gs.proportion_inactive) {
       var pctSpan = document.createElement('span');
       pctSpan.textContent = ' (' + gs.proportion_inactive.toFixed(1) + '% of days inactive)';
@@ -498,13 +505,10 @@ const DASHBOARD_DATA = {};
 
     function renderGapRows(year) {
       clearChildren(gapTbody);
-      var rank = 0;
-      D.gaps.forEach(function(g) {
-        var gapYear = g.start_timestamp.substring(0, 4);
-        if (year !== 'All' && gapYear !== year) return;
-        rank++;
+      var filtered = filterByYear(D.gaps, year, 'start_timestamp').slice(0, TOP_GAPS_LIMIT);
+      filtered.forEach(function(g, i) {
         var tr = document.createElement('tr');
-        tr.appendChild(txt('td', String(rank), 'rank'));
+        tr.appendChild(txt('td', String(i + 1), 'rank'));
         tr.appendChild(txt('td', formatDate(g.start_timestamp)));
         tr.appendChild(txt('td', formatDate(g.end_timestamp)));
         tr.appendChild(txt('td', g.length_days.toFixed(1), 'num'));

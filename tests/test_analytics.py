@@ -12,6 +12,7 @@ from analytics import (
     build_dashboard_payload,
     compute_chart_data,
     compute_gap_analysis,
+    compute_monthly_data,
     compute_summary_stats,
     print_summary_report,
     process_conversations,
@@ -296,6 +297,44 @@ class TestComputeChartData:
         chart = compute_chart_data(records)
         assert chart["total_messages"]["avg_7d"] == [10.0, 15.0]
         assert chart["total_messages"]["avg_lifetime"] == [10.0, 15.0]
+
+
+# ── TestComputeMonthlyData ──────────────────
+
+
+class TestComputeMonthlyData:
+    def test_basic_aggregation(self):
+        records = [
+            {"date": "2024-01-15", "total_messages": 10, "total_chats": 2, "avg_messages_per_chat": 5.0, "max_messages_in_chat": 6},
+            {"date": "2024-01-20", "total_messages": 8, "total_chats": 1, "avg_messages_per_chat": 8.0, "max_messages_in_chat": 8},
+            {"date": "2024-02-05", "total_messages": 5, "total_chats": 3, "avg_messages_per_chat": 1.67, "max_messages_in_chat": 2},
+        ]
+        result = compute_monthly_data(records)
+        assert result["months"] == ["2024-01", "2024-02"]
+        assert result["chats"] == [3, 3]
+        assert result["messages"] == [18, 5]
+
+    def test_avg_messages_per_chat(self):
+        records = [
+            {"date": "2024-01-10", "total_messages": 10, "total_chats": 2, "avg_messages_per_chat": 5.0, "max_messages_in_chat": 6},
+            {"date": "2024-01-20", "total_messages": 6, "total_chats": 3, "avg_messages_per_chat": 2.0, "max_messages_in_chat": 3},
+        ]
+        result = compute_monthly_data(records)
+        assert result["avg_messages"] == [pytest.approx(3.2)]
+
+    def test_empty_records(self):
+        result = compute_monthly_data([])
+        assert result["months"] == []
+        assert result["chats"] == []
+
+    def test_rolling_avg_3m(self):
+        records = [
+            {"date": "2024-01-15", "total_messages": 10, "total_chats": 1, "avg_messages_per_chat": 10.0, "max_messages_in_chat": 10},
+            {"date": "2024-02-15", "total_messages": 20, "total_chats": 2, "avg_messages_per_chat": 10.0, "max_messages_in_chat": 12},
+            {"date": "2024-03-15", "total_messages": 30, "total_chats": 3, "avg_messages_per_chat": 10.0, "max_messages_in_chat": 15},
+        ]
+        result = compute_monthly_data(records)
+        assert result["chats_avg_3m"] == [1.0, 1.5, 2.0]
 
 
 # ── TestRollingAvg ──────────────────────────

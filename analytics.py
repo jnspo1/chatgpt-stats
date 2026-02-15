@@ -273,6 +273,39 @@ def compute_chart_data(daily_records: list[dict]) -> dict[str, Any]:
     }
 
 
+def compute_monthly_data(daily_records: list[dict]) -> dict[str, Any]:
+    """Aggregate daily records into monthly buckets for the overview chart."""
+    sorted_records = sorted(daily_records, key=lambda r: r["date"])
+
+    monthly: dict[str, dict] = {}
+    for r in sorted_records:
+        month = r["date"][:7]  # "YYYY-MM"
+        if month not in monthly:
+            monthly[month] = {"chats": 0, "messages": 0, "total_msgs_raw": 0, "total_chats_raw": 0}
+        monthly[month]["chats"] += r["total_chats"]
+        monthly[month]["messages"] += r["total_messages"]
+        monthly[month]["total_msgs_raw"] += r["total_messages"]
+        monthly[month]["total_chats_raw"] += r["total_chats"]
+
+    months = sorted(monthly.keys())
+    chats = [monthly[m]["chats"] for m in months]
+    messages = [monthly[m]["messages"] for m in months]
+    avg_messages = [
+        round(monthly[m]["total_msgs_raw"] / monthly[m]["total_chats_raw"], 2)
+        if monthly[m]["total_chats_raw"] > 0 else 0
+        for m in months
+    ]
+
+    return {
+        "months": months,
+        "chats": chats,
+        "messages": messages,
+        "avg_messages": avg_messages,
+        "chats_avg_3m": [round(v, 2) for v in _rolling_avg([float(c) for c in chats], 3)],
+        "messages_avg_3m": [round(v, 2) for v in _rolling_avg([float(m) for m in messages], 3)],
+    }
+
+
 def _top_records_per_year(records: list[dict], per_year: int = 10) -> list[dict]:
     """Return top *per_year* records for each calendar year, preserving sort order.
 

@@ -1,5 +1,472 @@
 {% extends "base.html" %}
 {% block title %}Patterns — ChatGPT Statistics{% endblock %}
+
 {% block content %}
-<p style="color: var(--text-dim);">Patterns page coming soon.</p>
+<style>
+.heatmap-wrap { overflow-x: auto; margin-bottom: 8px; }
+.heatmap {
+  display: grid;
+  grid-template-columns: 40px repeat(24, 1fr);
+  gap: 2px;
+  min-width: 500px;
+}
+.heatmap-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.heatmap-cell {
+  aspect-ratio: 1;
+  border-radius: 3px;
+  min-width: 14px;
+  min-height: 14px;
+  position: relative;
+  cursor: default;
+}
+.heatmap-cell:hover { outline: 1px solid var(--amber); outline-offset: -1px; }
+.heatmap-hour-labels {
+  display: grid;
+  grid-template-columns: 40px repeat(24, 1fr);
+  gap: 2px;
+  min-width: 500px;
+}
+.heatmap-hour-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  color: var(--text-muted);
+  text-align: center;
+}
+.heatmap-tooltip {
+  position: fixed;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text);
+  pointer-events: none;
+  z-index: 100;
+  white-space: nowrap;
+  display: none;
+}
+.weekday-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+@media (max-width: 640px) { .weekday-stats { grid-template-columns: 1fr; } }
+.weekday-stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 24px;
+  text-align: center;
+}
+.weekday-stat-card h3 {
+  font-size: 13px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+}
+.weekday-stat-big {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  margin-bottom: 4px;
+}
+.weekday-stat-sub {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+.weekday-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 4px 0;
+}
+.weekday-bar-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text-dim);
+  width: 30px;
+  text-align: right;
+}
+.weekday-bar-track {
+  flex: 1;
+  height: 8px;
+  background: var(--surface2);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.weekday-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
+.weekday-bar-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text);
+  width: 45px;
+  text-align: right;
+}
+</style>
+
+<section class="chart-section fade-in">
+  <h2>Activity Heatmap</h2>
+  <div class="chart-box">
+    <h3>Messages by Day & Hour</h3>
+    <div class="heatmap-wrap" id="heatmap-container"></div>
+  </div>
+</section>
+
+<section class="chart-section fade-in">
+  <h2>Hourly Distribution</h2>
+  <div class="chart-box">
+    <h3>Messages by Hour of Day</h3>
+    <canvas id="chart-hourly" style="max-height: 300px;"></canvas>
+  </div>
+</section>
+
+<section class="chart-section fade-in">
+  <h2>Weekly Rhythm</h2>
+  <div class="weekday-stats" id="weekday-comparison"></div>
+</section>
+
+<section class="chart-section gap-table-wrap fade-in">
+  <h2>Gap Analysis</h2>
+  <div class="table-box" id="gaps-table"></div>
+</section>
+
+<div class="heatmap-tooltip" id="heatmap-tooltip"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+  var D = DASHBOARD_DATA;
+  if (!D.hourly) return;
+
+  // ── Helpers ──
+  function el(tag, attrs, children) {
+    var e = document.createElement(tag);
+    if (attrs) Object.keys(attrs).forEach(function(k) {
+      if (k === 'className') e.className = attrs[k];
+      else if (k === 'textContent') e.textContent = attrs[k];
+      else e.setAttribute(k, attrs[k]);
+    });
+    if (children) children.forEach(function(c) { if (c) e.appendChild(c); });
+    return e;
+  }
+  function txt(tag, text, cls) {
+    var e = document.createElement(tag);
+    e.textContent = text;
+    if (cls) e.className = cls;
+    return e;
+  }
+  function clearChildren(node) {
+    while (node.firstChild) node.removeChild(node.firstChild);
+  }
+  function formatDate(isoStr) {
+    var d = new Date(isoStr);
+    return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  }
+
+  var DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  var HOUR_LABELS = [0, 3, 6, 9, 12, 15, 18, 21];
+
+  // ── 1. Activity Heatmap ──
+  var heatmap = D.hourly.heatmap;
+  if (heatmap && heatmap.length === 7) {
+    var container = document.getElementById('heatmap-container');
+    var tooltip = document.getElementById('heatmap-tooltip');
+
+    // Find max value for intensity scaling
+    var maxVal = 0;
+    for (var d = 0; d < 7; d++) {
+      for (var h = 0; h < 24; h++) {
+        if (heatmap[d][h] > maxVal) maxVal = heatmap[d][h];
+      }
+    }
+
+    function cellColor(val) {
+      if (val === 0) return 'var(--surface2)';
+      if (maxVal === 0) return 'var(--surface2)';
+      var ratio = val / maxVal;
+      if (ratio < 0.25) return 'rgba(229, 165, 75, 0.2)';
+      if (ratio < 0.50) return 'rgba(229, 165, 75, 0.5)';
+      if (ratio < 0.75) return 'rgba(229, 165, 75, 0.8)';
+      return 'var(--amber)';
+    }
+
+    // Hour labels row
+    var hourRow = el('div', { className: 'heatmap-hour-labels' });
+    hourRow.appendChild(el('div')); // empty spacer for row label column
+    for (var h = 0; h < 24; h++) {
+      var lbl = el('div', { className: 'heatmap-hour-label' });
+      if (HOUR_LABELS.indexOf(h) >= 0) lbl.textContent = String(h);
+      hourRow.appendChild(lbl);
+    }
+    container.appendChild(hourRow);
+
+    // Grid rows
+    var grid = el('div', { className: 'heatmap' });
+    for (var d = 0; d < 7; d++) {
+      // Row label
+      grid.appendChild(el('div', { className: 'heatmap-label', textContent: DAYS[d] }));
+      // Cells
+      for (var h = 0; h < 24; h++) {
+        var val = heatmap[d][h];
+        var cell = el('div', { className: 'heatmap-cell' });
+        cell.style.backgroundColor = cellColor(val);
+        cell.setAttribute('data-day', DAYS[d]);
+        cell.setAttribute('data-hour', String(h));
+        cell.setAttribute('data-count', String(val));
+        grid.appendChild(cell);
+      }
+    }
+    container.appendChild(grid);
+
+    // Tooltip on hover
+    grid.addEventListener('mouseover', function(e) {
+      var cell = e.target;
+      if (!cell.classList.contains('heatmap-cell')) return;
+      var day = cell.getAttribute('data-day');
+      var hour = cell.getAttribute('data-hour');
+      var count = cell.getAttribute('data-count');
+      var hourNum = parseInt(hour, 10);
+      var label = (hourNum < 10 ? '0' : '') + hourNum + ':00';
+      tooltip.textContent = day + ' ' + label + ' — ' + parseInt(count, 10).toLocaleString() + ' msgs';
+      tooltip.style.display = 'block';
+    });
+    grid.addEventListener('mousemove', function(e) {
+      tooltip.style.left = (e.clientX + 12) + 'px';
+      tooltip.style.top = (e.clientY - 30) + 'px';
+    });
+    grid.addEventListener('mouseout', function(e) {
+      if (!e.target.classList.contains('heatmap-cell')) return;
+      tooltip.style.display = 'none';
+    });
+  }
+
+  // ── 2. Hourly Bar Chart ──
+  Chart.defaults.color = '#8a877e';
+  Chart.defaults.borderColor = '#2a2d3a';
+  Chart.defaults.font.family = "'DM Sans', sans-serif";
+  Chart.defaults.font.size = 11;
+
+  var hourlyTotals = D.hourly.hourly_totals;
+  if (hourlyTotals && hourlyTotals.length === 24) {
+    var labels = [];
+    for (var i = 0; i < 24; i++) labels.push(String(i) + ':00');
+
+    var ctx = document.getElementById('chart-hourly').getContext('2d');
+    new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Messages',
+          data: hourlyTotals,
+          backgroundColor: 'rgba(108, 180, 217, 0.7)',
+          borderWidth: 0,
+          barPercentage: 0.85,
+          categoryPercentage: 0.9,
+        }],
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: '#1e2029',
+            borderColor: '#2a2d3a',
+            borderWidth: 1,
+            bodyFont: { size: 12 },
+            padding: 10,
+            callbacks: {
+              label: function(ctx) { return ctx.parsed.x.toLocaleString() + ' messages'; }
+            },
+          },
+        },
+        scales: {
+          x: { beginAtZero: true, grid: { color: '#1e2029' }, ticks: { precision: 0 } },
+          y: { grid: { display: false }, ticks: { font: { family: "'JetBrains Mono', monospace", size: 10 } } },
+        },
+      },
+    });
+  }
+
+  // ── 3. Weekday vs Weekend ──
+  var weekdayTotals = D.hourly.weekday_totals;
+  if (weekdayTotals && weekdayTotals.length === 7) {
+    var compContainer = document.getElementById('weekday-comparison');
+
+    var weekdaySum = 0;
+    var weekendSum = 0;
+    var maxDay = 0;
+    for (var i = 0; i < 7; i++) {
+      if (i < 5) weekdaySum += weekdayTotals[i];
+      else weekendSum += weekdayTotals[i];
+      if (weekdayTotals[i] > maxDay) maxDay = weekdayTotals[i];
+    }
+    var totalAll = weekdaySum + weekendSum;
+    var weekdayAvg = Math.round(weekdaySum / 5);
+    var weekendAvg = Math.round(weekendSum / 2);
+    var ratio = weekendAvg > 0 ? (weekdayAvg / weekendAvg).toFixed(2) : '\u2014';
+
+    // Weekday card
+    var wdCard = el('div', { className: 'weekday-stat-card' });
+    wdCard.appendChild(txt('h3', 'Weekdays (Mon\u2013Fri)'));
+    var wdBig = txt('div', weekdaySum.toLocaleString(), 'weekday-stat-big');
+    wdBig.style.color = 'var(--skyblue)';
+    wdCard.appendChild(wdBig);
+    wdCard.appendChild(txt('div', 'total messages \u00b7 ' + weekdayAvg.toLocaleString() + '/day avg', 'weekday-stat-sub'));
+    wdCard.appendChild(txt('div', Math.round(weekdaySum / totalAll * 100) + '% of all messages', 'weekday-stat-sub'));
+
+    // Day bars for weekday
+    for (var i = 0; i < 5; i++) {
+      var row = el('div', { className: 'weekday-bar-row' });
+      row.appendChild(txt('span', DAYS[i], 'weekday-bar-label'));
+      var track = el('div', { className: 'weekday-bar-track' });
+      var fill = el('div', { className: 'weekday-bar-fill' });
+      fill.style.width = (maxDay > 0 ? (weekdayTotals[i] / maxDay * 100) : 0) + '%';
+      fill.style.background = 'var(--skyblue)';
+      track.appendChild(fill);
+      row.appendChild(track);
+      row.appendChild(txt('span', weekdayTotals[i].toLocaleString(), 'weekday-bar-value'));
+      wdCard.appendChild(row);
+    }
+    compContainer.appendChild(wdCard);
+
+    // Weekend card
+    var weCard = el('div', { className: 'weekday-stat-card' });
+    weCard.appendChild(txt('h3', 'Weekends (Sat\u2013Sun)'));
+    var weBig = txt('div', weekendSum.toLocaleString(), 'weekday-stat-big');
+    weBig.style.color = 'var(--amber)';
+    weCard.appendChild(weBig);
+    weCard.appendChild(txt('div', 'total messages \u00b7 ' + weekendAvg.toLocaleString() + '/day avg', 'weekday-stat-sub'));
+    weCard.appendChild(txt('div', Math.round(weekendSum / totalAll * 100) + '% of all messages', 'weekday-stat-sub'));
+
+    // Day bars for weekend
+    for (var i = 5; i < 7; i++) {
+      var row = el('div', { className: 'weekday-bar-row' });
+      row.appendChild(txt('span', DAYS[i], 'weekday-bar-label'));
+      var track = el('div', { className: 'weekday-bar-track' });
+      var fill = el('div', { className: 'weekday-bar-fill' });
+      fill.style.width = (maxDay > 0 ? (weekdayTotals[i] / maxDay * 100) : 0) + '%';
+      fill.style.background = 'var(--amber)';
+      track.appendChild(fill);
+      row.appendChild(track);
+      row.appendChild(txt('span', weekdayTotals[i].toLocaleString(), 'weekday-bar-value'));
+      weCard.appendChild(row);
+    }
+
+    // Ratio note
+    var ratioNote = txt('div', 'Weekday/weekend ratio: ' + ratio + 'x', 'weekday-stat-sub');
+    ratioNote.style.marginTop = '12px';
+    weCard.appendChild(ratioNote);
+    compContainer.appendChild(weCard);
+  }
+
+  // ── 4. Gap Analysis Table ──
+  var gs = D.gap_stats || {};
+  var gapsEl = document.getElementById('gaps-table');
+  var TOP_GAPS_LIMIT = 20;
+  var currentGapYear = 'All';
+
+  if (D.gaps && D.gaps.length) {
+    var titleEl = txt('h3', 'Longest Gaps');
+    if (gs.proportion_inactive) {
+      var pctSpan = document.createElement('span');
+      pctSpan.textContent = ' (' + gs.proportion_inactive.toFixed(1) + '% of days inactive)';
+      pctSpan.style.fontWeight = '400';
+      pctSpan.style.color = 'var(--text-dim)';
+      pctSpan.style.fontSize = '12px';
+      titleEl.appendChild(pctSpan);
+    }
+    gapsEl.appendChild(titleEl);
+
+    // Auto-detect years from gap data
+    var gapYearSet = {};
+    D.gaps.forEach(function(g) { gapYearSet[g.start_timestamp.substring(0, 4)] = true; });
+    var gapYears = ['All'];
+    Object.keys(gapYearSet).sort().forEach(function(y) { gapYears.push(y); });
+
+    // Pill bar
+    var pillBar = el('div', { className: 'pill-bar' });
+    gapYears.forEach(function(yr) {
+      var pill = txt('span', yr, 'pill' + (yr === 'All' ? ' active' : ''));
+      pill.addEventListener('click', function() {
+        pillBar.querySelectorAll('.pill').forEach(function(p) { p.classList.remove('active'); });
+        pill.classList.add('active');
+        currentGapYear = yr;
+        renderGapRows();
+      });
+      pillBar.appendChild(pill);
+    });
+    gapsEl.appendChild(pillBar);
+
+    // Summary stats row
+    if (gs.total_days) {
+      var statsRow = el('div', { style: 'display: flex; gap: 20px; margin-bottom: 12px; font-size: 12px; color: var(--text-dim); font-family: "JetBrains Mono", monospace;' });
+      statsRow.appendChild(txt('span', 'Total: ' + gs.total_days.toLocaleString() + 'd'));
+      statsRow.appendChild(txt('span', 'Active: ' + gs.days_active.toLocaleString() + 'd'));
+      statsRow.appendChild(txt('span', 'Inactive: ' + gs.days_inactive.toLocaleString() + 'd'));
+      if (gs.longest_gap) {
+        statsRow.appendChild(txt('span', 'Longest: ' + gs.longest_gap.length_days.toFixed(1) + 'd'));
+      }
+      gapsEl.appendChild(statsRow);
+    }
+
+    var table = document.createElement('table');
+    var thead = document.createElement('thead');
+    var headerRow = document.createElement('tr');
+    headerRow.appendChild(txt('th', '#'));
+    headerRow.appendChild(txt('th', 'Start'));
+    headerRow.appendChild(txt('th', 'End'));
+    headerRow.appendChild(txt('th', 'Days', 'num-col'));
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+
+    var gapTbody = document.createElement('tbody');
+    table.appendChild(gapTbody);
+    gapsEl.appendChild(table);
+
+    function filterGapsByYear(gaps, year) {
+      if (year === 'All') return gaps;
+      return gaps.filter(function(g) {
+        return g.start_timestamp.substring(0, 4) === year;
+      });
+    }
+
+    function renderGapRows() {
+      clearChildren(gapTbody);
+      var filtered = filterGapsByYear(D.gaps, currentGapYear).slice(0, TOP_GAPS_LIMIT);
+      filtered.forEach(function(g, i) {
+        var tr = document.createElement('tr');
+        tr.appendChild(txt('td', String(i + 1), 'rank'));
+        tr.appendChild(txt('td', formatDate(g.start_timestamp), 'date'));
+        tr.appendChild(txt('td', formatDate(g.end_timestamp)));
+        tr.appendChild(txt('td', g.length_days.toFixed(1), 'num'));
+        gapTbody.appendChild(tr);
+      });
+    }
+
+    renderGapRows();
+  }
+
+})();
+</script>
 {% endblock %}

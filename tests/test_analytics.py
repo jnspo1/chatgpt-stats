@@ -1,8 +1,8 @@
 """Tests for analytics.py using synthetic conversation data."""
 
 import json
-import tempfile
 from datetime import datetime
+from io import StringIO
 
 import pytest
 
@@ -13,12 +13,14 @@ from analytics import (
     compute_chart_data,
     compute_gap_analysis,
     compute_summary_stats,
+    print_summary_report,
     process_conversations,
+    save_analytics_files,
 )
 
 
 def _make_conversation(user_messages):
-    """Build a minimal conversation dict from a list of (timestamp, text) tuples."""
+    """Build a minimal conversation dict from a list of (unix_epoch, text) tuples."""
     mapping = {}
     for i, (ts, text) in enumerate(user_messages):
         mapping[f"msg-{i}"] = {
@@ -120,6 +122,41 @@ class TestProcessConversations:
         summaries, records, timestamps = process_conversations(convos)
         assert len(timestamps) == 1  # only the user message
 
+    def test_single_message_chat_has_zero_duration(self):
+        ts = datetime(2024, 1, 15, 10, 0).timestamp()
+        convos = [_make_conversation([(ts, "hello")])]
+        summaries, _, _ = process_conversations(convos)
+        assert len(summaries) == 1
+        assert summaries[0]["message_count"] == 1
+        assert summaries[0]["duration_minutes"] == 0.0
+
+    def test_non_dict_message_data_in_mapping(self):
+        convos = [{"mapping": {
+            "node1": "not a dict",
+            "node2": ["also", "not", "a", "dict"],
+            "node3": {"message": {"author": {"role": "user"}, "create_time": 1705300000}},
+        }}]
+        summaries, _, timestamps = process_conversations(convos)
+        assert len(timestamps) == 1  # only node3 is valid
+
+    def test_invalid_timestamp_skipped(self):
+        mapping = {
+            "bad": {"message": {"author": {"role": "user"}, "create_time": "not-a-number"}},
+            "good": {"message": {"author": {"role": "user"}, "create_time": 1705300000}},
+        }
+        convos = [{"mapping": mapping}]
+        summaries, _, timestamps = process_conversations(convos)
+        assert len(timestamps) == 1
+
+    def test_overflow_timestamp_skipped(self):
+        mapping = {
+            "bad": {"message": {"author": {"role": "user"}, "create_time": 1e20}},
+            "good": {"message": {"author": {"role": "user"}, "create_time": 1705300000}},
+        }
+        convos = [{"mapping": mapping}]
+        summaries, _, timestamps = process_conversations(convos)
+        assert len(timestamps) == 1
+
 
 # ── TestComputeGapAnalysis ──────────────────
 
@@ -158,6 +195,7 @@ class TestComputeGapAnalysis:
         assert result["total_days"] == 3
         assert result["days_active"] == 2
         assert result["days_inactive"] == 1
+        assert result["proportion_inactive"] == pytest.approx(33.33, abs=0.01)
 
     def test_longest_gap_is_first(self):
         ts = [
@@ -168,6 +206,17 @@ class TestComputeGapAnalysis:
         ]
         result = compute_gap_analysis(ts)
         assert result["longest_gap"]["length_days"] == pytest.approx(8.0, abs=0.01)
+
+    def test_unsorted_input_produces_correct_gaps(self):
+        ts = [
+            datetime(2024, 1, 5, 10, 0),
+            datetime(2024, 1, 1, 10, 0),
+            datetime(2024, 1, 3, 10, 0),
+        ]
+        result = compute_gap_analysis(ts)
+        assert result["total_days"] == 5
+        assert result["days_active"] == 3
+        assert result["days_inactive"] == 2
 
 
 # ── TestComputeSummaryStats ─────────────────
@@ -188,6 +237,7 @@ class TestComputeSummaryStats:
         assert stats["total_chats"] == 2
         assert stats["first_date"] == "2024-01-15"
         assert stats["last_date"] == "2024-01-16"
+        assert stats["years_span"] >= 0
 
     def test_empty(self):
         stats = compute_summary_stats([], [])
@@ -238,6 +288,15 @@ class TestComputeChartData:
         assert chart["dates"] == []
         assert chart["chats"]["values"] == []
 
+    def test_rolling_avg_values(self):
+        records = [
+            {"date": "2024-01-01", "total_messages": 10, "total_chats": 1, "avg_messages_per_chat": 10.0, "max_messages_in_chat": 10},
+            {"date": "2024-01-02", "total_messages": 20, "total_chats": 1, "avg_messages_per_chat": 20.0, "max_messages_in_chat": 20},
+        ]
+        chart = compute_chart_data(records)
+        assert chart["total_messages"]["avg_7d"] == [10.0, 15.0]
+        assert chart["total_messages"]["avg_lifetime"] == [10.0, 15.0]
+
 
 # ── TestRollingAvg ──────────────────────────
 
@@ -261,6 +320,10 @@ class TestRollingAvg:
     def test_empty(self):
         assert _rolling_avg([], 7) == []
 
+    def test_window_1(self):
+        values = [1.0, 3.0, 5.0]
+        assert _rolling_avg(values, 1) == [1.0, 3.0, 5.0]
+
 
 class TestExpandingAvg:
     def test_expanding(self):
@@ -270,23 +333,95 @@ class TestExpandingAvg:
         assert result[1] == pytest.approx(3.0)
         assert result[2] == pytest.approx(4.0)
 
+    def test_empty(self):
+        assert _expanding_avg([]) == []
+
+
+# ── TestSaveAnalyticsFiles ──────────────────
+
+
+class TestSaveAnalyticsFiles:
+    def test_creates_expected_files(self, tmp_path):
+        summaries = [{"date": "2024-01-15", "start_time": "2024-01-15T10:00:00",
+                       "end_time": "2024-01-15T11:00:00", "message_count": 5,
+                       "duration_minutes": 60}]
+        records = [{"date": "2024-01-15", "total_messages": 5, "total_chats": 1,
+                     "avg_messages_per_chat": 5.0, "max_messages_in_chat": 5}]
+        gaps = [{"start_timestamp": "2024-01-15T10:00:00",
+                 "end_timestamp": "2024-01-17T10:00:00", "length_days": 2.0}]
+
+        save_analytics_files(summaries, records, gaps, str(tmp_path))
+
+        assert (tmp_path / "chat_summaries.json").exists()
+        assert (tmp_path / "chat_summaries.csv").exists()
+        assert (tmp_path / "daily_stats.json").exists()
+        assert (tmp_path / "daily_stats.csv").exists()
+        assert (tmp_path / "message_gaps.json").exists()
+        assert (tmp_path / "message_gaps.csv").exists()
+
+        # Verify JSON round-trips
+        loaded = json.loads((tmp_path / "chat_summaries.json").read_text())
+        assert loaded[0]["message_count"] == 5
+
+    def test_no_gap_files_when_gaps_empty(self, tmp_path):
+        save_analytics_files([], [], [], str(tmp_path))
+        assert (tmp_path / "chat_summaries.json").exists()
+        assert not (tmp_path / "message_gaps.json").exists()
+        assert not (tmp_path / "message_gaps.csv").exists()
+
+
+# ── TestPrintSummaryReport ──────────────────
+
+
+class TestPrintSummaryReport:
+    def test_smoke_with_data(self, capsys):
+        stats = {
+            "total_messages": 100, "total_chats": 10,
+            "first_date": "2024-01-01", "last_date": "2024-01-31",
+            "years_span": 0.08,
+            "top_days_by_chats": [{"date": "2024-01-15", "total_chats": 5}],
+            "top_days_by_messages": [{"date": "2024-01-15", "total_messages": 20}],
+        }
+        gap_data = {
+            "total_days": 31, "days_active": 20, "days_inactive": 11,
+            "proportion_inactive": 35.48,
+            "longest_gap": {"length_days": 3.5, "start_timestamp": "2024-01-10T10:00:00",
+                            "end_timestamp": "2024-01-13T22:00:00"},
+            "gaps": [{"length_days": 3.5, "start_timestamp": "2024-01-10T10:00:00",
+                       "end_timestamp": "2024-01-13T22:00:00"}],
+        }
+        print_summary_report(stats, gap_data)
+        output = capsys.readouterr().out
+        assert "Total Messages: 100" in output
+        assert "Total Chats: 10" in output
+        assert "Inactivity Analysis" in output
+
+    def test_smoke_with_empty_data(self, capsys):
+        stats = {
+            "total_messages": 0, "total_chats": 0,
+            "first_date": None, "last_date": None,
+            "years_span": 0, "top_days_by_chats": [], "top_days_by_messages": [],
+        }
+        gap_data = {"total_days": 0, "days_active": 0, "days_inactive": 0,
+                     "proportion_inactive": 0, "longest_gap": None, "gaps": []}
+        print_summary_report(stats, gap_data)
+        output = capsys.readouterr().out
+        assert "Total Messages: 0" in output
+
 
 # ── TestBuildDashboardPayload ───────────────
 
 
 class TestBuildDashboardPayload:
-    def test_integration(self):
+    def test_integration(self, tmp_path):
         convos = _make_conversations_with_days([
             ("2024-01-15", 2, 3),
             ("2024-01-16", 1, 5),
         ])
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
-            json.dump(convos, f)
-            tmp_path = f.name
+        json_file = tmp_path / "conversations.json"
+        json_file.write_text(json.dumps(convos))
 
-        payload = build_dashboard_payload(tmp_path)
+        payload = build_dashboard_payload(str(json_file))
 
         assert "summary" in payload
         assert "charts" in payload
@@ -296,3 +431,6 @@ class TestBuildDashboardPayload:
         assert payload["summary"]["total_chats"] == 3
         assert payload["summary"]["total_messages"] == 11
         assert len(payload["charts"]["dates"]) == 2
+        # Verify chart sub-keys exist
+        assert "avg_7d" in payload["charts"]["chats"]
+        assert "avg_lifetime" in payload["charts"]["total_messages"]

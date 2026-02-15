@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import os
 from datetime import datetime, timedelta
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def load_conversations(path: str = "conversations.json") -> list[dict]:
@@ -53,8 +56,11 @@ def process_conversations(
             create_time = message.get("create_time")
 
             if author_role == "user" and create_time is not None:
+                try:
+                    message_datetime = datetime.fromtimestamp(float(create_time))
+                except (TypeError, ValueError, OSError, OverflowError):
+                    continue
                 chat_message_count += 1
-                message_datetime = datetime.fromtimestamp(create_time)
                 message_date = message_datetime.date()
 
                 all_message_timestamps.append(message_datetime)
@@ -89,6 +95,13 @@ def process_conversations(
             daily_stats[chat_date]["total_chats"] += 1
             daily_stats[chat_date]["messages_per_chat"].append(chat_message_count)
 
+    if conversations and not chat_summaries:
+        logger.warning(
+            "Loaded %d conversations but none produced valid summaries. "
+            "The OpenAI export format may have changed.",
+            len(conversations),
+        )
+
     daily_records = []
     for date, stats in daily_stats.items():
         mpc = stats["messages_per_chat"]
@@ -109,7 +122,7 @@ def process_conversations(
 def compute_gap_analysis(
     timestamps: list[datetime],
 ) -> dict[str, Any]:
-    """Compute gap analysis from sorted message timestamps.
+    """Compute gap analysis from message timestamps (sorted internally).
 
     Returns dict with keys: gaps, total_days, days_active, days_inactive,
     proportion_inactive, longest_gap.
@@ -205,7 +218,7 @@ def compute_summary_stats(
 # ---------------------------------------------------------------------------
 
 def _rolling_avg(values: list[float], window: int) -> list[float]:
-    """Compute rolling average with min_periods=1 semantics."""
+    """Compute rolling average, using available values when the window is not yet full."""
     result = []
     for i in range(len(values)):
         start = max(0, i - window + 1)
@@ -228,7 +241,7 @@ def compute_chart_data(daily_records: list[dict]) -> dict[str, Any]:
     """Compute chart series from daily records for Chart.js rendering.
 
     Returns dict with keys: dates, and for each metric (chats, avg_messages,
-    total_messages): raw values, 7d avg, 28d avg, lifetime avg.
+    total_messages): values, avg_7d, avg_28d, avg_lifetime.
     """
     sorted_records = sorted(daily_records, key=lambda r: r["date"])
 
@@ -261,7 +274,11 @@ def compute_chart_data(daily_records: list[dict]) -> dict[str, Any]:
 
 
 def build_dashboard_payload(path: str = "conversations.json") -> dict[str, Any]:
-    """One-call entry point: load, process, compute all stats for the dashboard."""
+    """One-call entry point: load, process, compute all stats for the dashboard.
+
+    Returns dict with keys: generated_at, summary, charts, gaps (top 20),
+    gap_stats.
+    """
     convos = load_conversations(path)
     summaries, records, timestamps = process_conversations(convos)
     gap_data = compute_gap_analysis(timestamps)

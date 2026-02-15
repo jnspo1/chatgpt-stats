@@ -1,14 +1,13 @@
 """FastAPI service for ChatGPT Statistics Dashboard.
 
-Serves a Chart.js dashboard with cached analytics data
-(1-hour TTL since data only changes on new OpenAI export).
-
-Deployment: uvicorn app:app --host 127.0.0.1 --port 8203
+Serves a Chart.js dashboard with cached analytics data.
+See chatgpt-stats.service and CLAUDE.md for deployment details.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 from pathlib import Path
@@ -19,24 +18,18 @@ from fastapi.responses import HTMLResponse
 
 from analytics import build_dashboard_payload
 
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
+logger = logging.getLogger(__name__)
+
 CONVERSATIONS_PATH = Path(__file__).parent / "conversations.json"
 TEMPLATE_PATH = Path(__file__).parent / "dashboard_template.html"
 CACHE_TTL_SECONDS = 3600  # 1 hour
+DATA_PLACEHOLDER = "const DASHBOARD_DATA = {};"
 
-# ---------------------------------------------------------------------------
-# App
-# ---------------------------------------------------------------------------
 app = FastAPI(
     title="ChatGPT Statistics Dashboard",
     root_path="/chatgpt_stats",
 )
 
-# ---------------------------------------------------------------------------
-# Thread-safe cache
-# ---------------------------------------------------------------------------
 _cache_lock = threading.Lock()
 _cache: dict[str, Any] = {
     "data": None,
@@ -45,9 +38,13 @@ _cache: dict[str, Any] = {
 
 
 def _get_cached_data(force_refresh: bool = False) -> dict[str, Any]:
-    """Return cached dashboard data, rebuilding if stale or forced."""
-    now = time.monotonic()
+    """Return cached dashboard data, rebuilding if stale or forced.
+
+    Holds the lock during rebuild to prevent concurrent requests from
+    each parsing the full conversations.json independently.
+    """
     with _cache_lock:
+        now = time.monotonic()
         if (
             not force_refresh
             and _cache["data"] is not None
@@ -55,18 +52,29 @@ def _get_cached_data(force_refresh: bool = False) -> dict[str, Any]:
         ):
             return _cache["data"]
 
-    data = build_dashboard_payload(str(CONVERSATIONS_PATH))
+        try:
+            data = build_dashboard_payload(str(CONVERSATIONS_PATH))
+        except FileNotFoundError:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"Data file not found: {CONVERSATIONS_PATH.name}. "
+                    f"Download your ChatGPT export from OpenAI "
+                    f"(Settings > Data Controls > Export) and place "
+                    f"conversations.json in {CONVERSATIONS_PATH.parent}."
+                ),
+            )
+        except json.JSONDecodeError as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Invalid JSON in {CONVERSATIONS_PATH.name}: {e.msg} (line {e.lineno})",
+            )
 
-    with _cache_lock:
         _cache["data"] = data
         _cache["built_at"] = time.monotonic()
+        return data
 
-    return data
 
-
-# ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
 @app.get("/health")
 @app.get("/healthz")
 def healthz():
@@ -76,17 +84,24 @@ def healthz():
 @app.get("/", response_class=HTMLResponse)
 def dashboard_html():
     """Serve the dashboard HTML with injected data."""
-    if not TEMPLATE_PATH.exists():
-        raise HTTPException(status_code=500, detail="Template not found")
+    try:
+        template = TEMPLATE_PATH.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Dashboard template not found at {TEMPLATE_PATH}",
+        )
+
+    if DATA_PLACEHOLDER not in template:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Dashboard template is missing the data placeholder '{DATA_PLACEHOLDER}'",
+        )
 
     data = _get_cached_data()
-    template = TEMPLATE_PATH.read_text(encoding="utf-8")
     data_json = json.dumps(data, ensure_ascii=False)
     data_json = data_json.replace("</", r"<\/")
-    html = template.replace(
-        "const DASHBOARD_DATA = {};",
-        f"const DASHBOARD_DATA = {data_json};",
-    )
+    html = template.replace(DATA_PLACEHOLDER, f"const DASHBOARD_DATA = {data_json};")
     return HTMLResponse(content=html)
 
 

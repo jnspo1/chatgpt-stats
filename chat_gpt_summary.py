@@ -4,6 +4,7 @@ Generates summary statistics, CSV/JSON files, and gap analysis from
 an OpenAI conversation export (conversations.json).
 """
 
+import json
 import sys
 
 from analytics import (
@@ -17,7 +18,24 @@ from analytics import (
 
 
 def main(json_path: str = "conversations.json") -> None:
-    convos = load_conversations(json_path)
+    try:
+        convos = load_conversations(json_path)
+    except FileNotFoundError:
+        print(
+            f"Error: '{json_path}' not found.\n"
+            f"Download your data from OpenAI (Settings > Data Controls > Export)\n"
+            f"and place conversations.json in the current directory.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        print(
+            f"Error: '{json_path}' is not valid JSON (line {e.lineno}): {e.msg}\n"
+            f"The file may be corrupted. Try re-downloading from OpenAI.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     summaries, records, timestamps = process_conversations(convos)
     gap_data = compute_gap_analysis(timestamps)
     stats = compute_summary_stats(summaries, records)

@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
 
@@ -82,6 +82,16 @@ def _get_cached_data(force_refresh: bool = False) -> dict[str, Any]:
 @app.get("/healthz")
 def healthz():
     return {"status": "ok"}
+
+
+@app.get("/app_icon.jpg")
+async def app_icon():
+    """Serve the app icon for iPhone Home Screen."""
+    return FileResponse(
+        Path(__file__).parent / "static" / "app_icon.jpg",
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 @app.get("/", response_class=HTMLResponse)

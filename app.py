@@ -23,9 +23,7 @@ from analytics import build_dashboard_payload
 logger = logging.getLogger(__name__)
 
 CONVERSATIONS_PATH = Path(__file__).parent / "conversations.json"
-TEMPLATE_PATH = Path(__file__).parent / "dashboard_template.html"
 CACHE_TTL_SECONDS = 3600  # 1 hour
-DATA_PLACEHOLDER = "const DASHBOARD_DATA = {};"
 
 app = FastAPI(
     title="ChatGPT Statistics Dashboard",
@@ -96,20 +94,6 @@ def overview(request: Request):
         {"request": request, "data_json": data_json, "page": "overview"},
     )
 
-
-@app.get("/old", response_class=HTMLResponse)
-def dashboard_html_old():
-    """Legacy single-page dashboard (to be removed)."""
-    try:
-        template = TEMPLATE_PATH.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        raise HTTPException(status_code=500, detail="Legacy template not found")
-    if DATA_PLACEHOLDER not in template:
-        raise HTTPException(status_code=500, detail="Missing data placeholder")
-    data = _get_cached_data()
-    data_json = json.dumps(data, ensure_ascii=False).replace("</", r"<\/")
-    html = template.replace(DATA_PLACEHOLDER, f"const DASHBOARD_DATA = {data_json};")
-    return HTMLResponse(content=html)
 
 
 @app.get("/trends", response_class=HTMLResponse)

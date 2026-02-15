@@ -158,6 +158,31 @@
   td.date { color: var(--amber); }
   td.num { text-align: right; font-weight: 600; }
 
+  .pill-bar {
+    display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap;
+  }
+  .pill {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; font-weight: 600;
+    padding: 4px 14px; border-radius: 20px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    user-select: none;
+  }
+  .pill:hover {
+    border-color: var(--amber-dim);
+    color: var(--text);
+  }
+  .pill.active {
+    background: var(--amber);
+    color: var(--bg);
+    border-color: var(--amber);
+    font-weight: 700;
+  }
+
   .gap-table-wrap { margin-bottom: 28px; }
   .gap-table-wrap .table-box { max-height: 500px; overflow-y: auto; }
 
@@ -389,10 +414,50 @@ const DASHBOARD_DATA = {};
       ]);
   }
 
+  // ── Year Filter Pills ──────────────────────
+  var FILTER_YEARS = ['All', '2023', '2024', '2025', '2026'];
+
+  function clearChildren(node) {
+    while (node.firstChild) node.removeChild(node.firstChild);
+  }
+
+  function createPillBar(onFilter) {
+    var bar = el('div', { className: 'pill-bar' });
+    FILTER_YEARS.forEach(function(yr) {
+      var pill = txt('span', yr, 'pill' + (yr === 'All' ? ' active' : ''));
+      pill.addEventListener('click', function() {
+        bar.querySelectorAll('.pill').forEach(function(p) { p.classList.remove('active'); });
+        pill.classList.add('active');
+        onFilter(yr);
+      });
+      bar.appendChild(pill);
+    });
+    return bar;
+  }
+
   // ── Top Days Tables ──────────────────────
   function renderTopTable(containerId, title, rows, valueKey, valueLabel) {
     var container = document.getElementById(containerId);
     container.appendChild(txt('h3', title));
+
+    var tbody = document.createElement('tbody');
+
+    function renderRows(year) {
+      clearChildren(tbody);
+      var rank = 0;
+      rows.forEach(function(r) {
+        var rowYear = r.date.substring(0, 4);
+        if (year !== 'All' && rowYear !== year) return;
+        rank++;
+        var tr = document.createElement('tr');
+        tr.appendChild(txt('td', String(rank), 'rank'));
+        tr.appendChild(txt('td', r.date, 'date'));
+        tr.appendChild(txt('td', r[valueKey].toLocaleString(), 'num'));
+        tbody.appendChild(tr);
+      });
+    }
+
+    container.appendChild(createPillBar(renderRows));
 
     var table = document.createElement('table');
     var thead = document.createElement('thead');
@@ -402,17 +467,10 @@ const DASHBOARD_DATA = {};
     headerRow.appendChild(txt('th', valueLabel, 'num-col'));
     thead.appendChild(headerRow);
     table.appendChild(thead);
-
-    var tbody = document.createElement('tbody');
-    rows.forEach(function(r, i) {
-      var tr = document.createElement('tr');
-      tr.appendChild(txt('td', String(i + 1), 'rank'));
-      tr.appendChild(txt('td', r.date, 'date'));
-      tr.appendChild(txt('td', r[valueKey].toLocaleString(), 'num'));
-      tbody.appendChild(tr);
-    });
     table.appendChild(tbody);
     container.appendChild(table);
+
+    renderRows('All');
   }
 
   if (s.top_days_by_chats && s.top_days_by_chats.length) {
@@ -436,6 +494,26 @@ const DASHBOARD_DATA = {};
     }
     gapsEl.appendChild(titleEl);
 
+    var gapTbody = document.createElement('tbody');
+
+    function renderGapRows(year) {
+      clearChildren(gapTbody);
+      var rank = 0;
+      D.gaps.forEach(function(g) {
+        var gapYear = g.start_timestamp.substring(0, 4);
+        if (year !== 'All' && gapYear !== year) return;
+        rank++;
+        var tr = document.createElement('tr');
+        tr.appendChild(txt('td', String(rank), 'rank'));
+        tr.appendChild(txt('td', formatDate(g.start_timestamp)));
+        tr.appendChild(txt('td', formatDate(g.end_timestamp)));
+        tr.appendChild(txt('td', g.length_days.toFixed(1), 'num'));
+        gapTbody.appendChild(tr);
+      });
+    }
+
+    gapsEl.appendChild(createPillBar(renderGapRows));
+
     var table = document.createElement('table');
     var thead = document.createElement('thead');
     var headerRow = document.createElement('tr');
@@ -445,18 +523,10 @@ const DASHBOARD_DATA = {};
     headerRow.appendChild(txt('th', 'Days', 'num-col'));
     thead.appendChild(headerRow);
     table.appendChild(thead);
-
-    var tbody = document.createElement('tbody');
-    D.gaps.forEach(function(g, i) {
-      var tr = document.createElement('tr');
-      tr.appendChild(txt('td', String(i + 1), 'rank'));
-      tr.appendChild(txt('td', formatDate(g.start_timestamp)));
-      tr.appendChild(txt('td', formatDate(g.end_timestamp)));
-      tr.appendChild(txt('td', g.length_days.toFixed(1), 'num'));
-      tbody.appendChild(tr);
-    });
-    table.appendChild(tbody);
+    table.appendChild(gapTbody);
     gapsEl.appendChild(table);
+
+    renderGapRows('All');
   }
 
 })();

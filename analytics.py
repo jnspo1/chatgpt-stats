@@ -306,6 +306,49 @@ def compute_monthly_data(daily_records: list[dict]) -> dict[str, Any]:
     }
 
 
+def compute_weekly_data(daily_records: list[dict]) -> dict[str, Any]:
+    """Aggregate daily records into ISO-week buckets for the trends page."""
+    from datetime import date as date_type
+
+    sorted_records = sorted(daily_records, key=lambda r: r["date"])
+
+    weekly: dict[str, dict] = {}
+    for r in sorted_records:
+        d = date_type.fromisoformat(r["date"])
+        iso = d.isocalendar()
+        week_key = f"{iso[0]}-W{iso[1]:02d}"
+        monday = d - timedelta(days=d.weekday())
+        if week_key not in weekly:
+            weekly[week_key] = {"monday": monday.isoformat(), "chats": 0, "messages": 0, "total_msgs": 0, "total_chats": 0}
+        weekly[week_key]["chats"] += r["total_chats"]
+        weekly[week_key]["messages"] += r["total_messages"]
+        weekly[week_key]["total_msgs"] += r["total_messages"]
+        weekly[week_key]["total_chats"] += r["total_chats"]
+
+    sorted_keys = sorted(weekly.keys())
+    weeks = [weekly[k]["monday"] for k in sorted_keys]
+    chats = [weekly[k]["chats"] for k in sorted_keys]
+    messages = [weekly[k]["messages"] for k in sorted_keys]
+    avg_messages = [
+        round(weekly[k]["total_msgs"] / weekly[k]["total_chats"], 2)
+        if weekly[k]["total_chats"] > 0 else 0
+        for k in sorted_keys
+    ]
+
+    return {
+        "weeks": weeks,
+        "chats": chats,
+        "messages": messages,
+        "avg_messages": avg_messages,
+        "chats_avg_4w": [round(v, 2) for v in _rolling_avg([float(c) for c in chats], 4)],
+        "chats_avg_12w": [round(v, 2) for v in _rolling_avg([float(c) for c in chats], 12)],
+        "messages_avg_4w": [round(v, 2) for v in _rolling_avg([float(m) for m in messages], 4)],
+        "messages_avg_12w": [round(v, 2) for v in _rolling_avg([float(m) for m in messages], 12)],
+        "avg_messages_avg_4w": [round(v, 2) for v in _rolling_avg([float(a) for a in avg_messages], 4)],
+        "avg_messages_avg_12w": [round(v, 2) for v in _rolling_avg([float(a) for a in avg_messages], 12)],
+    }
+
+
 def _top_records_per_year(records: list[dict], per_year: int = 10) -> list[dict]:
     """Return top *per_year* records for each calendar year, preserving sort order.
 

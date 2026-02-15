@@ -14,6 +14,7 @@ from analytics import (
     compute_gap_analysis,
     compute_monthly_data,
     compute_summary_stats,
+    compute_weekly_data,
     print_summary_report,
     process_conversations,
     save_analytics_files,
@@ -335,6 +336,37 @@ class TestComputeMonthlyData:
         ]
         result = compute_monthly_data(records)
         assert result["chats_avg_3m"] == [1.0, 1.5, 2.0]
+
+
+# ── TestComputeWeeklyData ─────────────────
+
+
+class TestComputeWeeklyData:
+    def test_basic_aggregation(self):
+        # Mon Jan 15 and Tue Jan 16 are same ISO week (2024-W03)
+        # Mon Jan 22 is next week (2024-W04)
+        records = [
+            {"date": "2024-01-15", "total_messages": 10, "total_chats": 2, "avg_messages_per_chat": 5.0, "max_messages_in_chat": 6},
+            {"date": "2024-01-16", "total_messages": 8, "total_chats": 1, "avg_messages_per_chat": 8.0, "max_messages_in_chat": 8},
+            {"date": "2024-01-22", "total_messages": 5, "total_chats": 3, "avg_messages_per_chat": 1.67, "max_messages_in_chat": 2},
+        ]
+        result = compute_weekly_data(records)
+        assert len(result["weeks"]) == 2
+        assert result["chats"] == [3, 3]
+        assert result["messages"] == [18, 5]
+
+    def test_empty_records(self):
+        result = compute_weekly_data([])
+        assert result["weeks"] == []
+
+    def test_has_rolling_averages(self):
+        records = [
+            {"date": f"2024-01-{d:02d}", "total_messages": d, "total_chats": 1, "avg_messages_per_chat": float(d), "max_messages_in_chat": d}
+            for d in range(1, 29)  # 4 weeks of data
+        ]
+        result = compute_weekly_data(records)
+        assert len(result["chats_avg_4w"]) == len(result["weeks"])
+        assert len(result["chats_avg_12w"]) == len(result["weeks"])
 
 
 # ── TestRollingAvg ──────────────────────────

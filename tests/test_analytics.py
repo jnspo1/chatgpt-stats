@@ -13,6 +13,7 @@ from analytics import (
     compute_chart_data,
     compute_gap_analysis,
     compute_hourly_data,
+    compute_length_distribution,
     compute_monthly_data,
     compute_summary_stats,
     compute_weekly_data,
@@ -411,6 +412,35 @@ class TestComputeHourlyData:
         result = compute_hourly_data(ts)
         assert result["weekday_totals"][0] == 2  # Monday
         assert result["weekday_totals"][5] == 1  # Saturday
+
+
+# ── TestComputeLengthDistribution ─────────
+
+
+class TestComputeLengthDistribution:
+    def test_basic_buckets(self):
+        summaries = [
+            {"message_count": 1},
+            {"message_count": 2},
+            {"message_count": 5},
+            {"message_count": 10},
+            {"message_count": 15},
+            {"message_count": 30},
+            {"message_count": 75},
+        ]
+        result = compute_length_distribution(summaries)
+        assert result["buckets"] == ["1-2", "3-5", "6-10", "11-20", "21-50", "50+"]
+        assert result["counts"] == [2, 1, 1, 1, 1, 1]
+
+    def test_empty(self):
+        result = compute_length_distribution([])
+        assert result["counts"] == [0, 0, 0, 0, 0, 0]
+
+    def test_all_in_one_bucket(self):
+        summaries = [{"message_count": 1}, {"message_count": 2}, {"message_count": 1}]
+        result = compute_length_distribution(summaries)
+        assert result["counts"][0] == 3
+        assert sum(result["counts"]) == 3
 
 
 # ── TestRollingAvg ──────────────────────────

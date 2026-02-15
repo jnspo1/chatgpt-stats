@@ -369,6 +369,31 @@ def compute_hourly_data(timestamps: list[datetime]) -> dict[str, Any]:
     }
 
 
+_LENGTH_BUCKETS = [
+    ("1-2", 1, 2),
+    ("3-5", 3, 5),
+    ("6-10", 6, 10),
+    ("11-20", 11, 20),
+    ("21-50", 21, 50),
+    ("50+", 51, float("inf")),
+]
+
+
+def compute_length_distribution(summaries: list[dict]) -> dict[str, Any]:
+    """Bucket conversation lengths into a histogram distribution."""
+    counts = [0] * len(_LENGTH_BUCKETS)
+    for s in summaries:
+        mc = s["message_count"]
+        for i, (_, lo, hi) in enumerate(_LENGTH_BUCKETS):
+            if lo <= mc <= hi:
+                counts[i] += 1
+                break
+    return {
+        "buckets": [b[0] for b in _LENGTH_BUCKETS],
+        "counts": counts,
+    }
+
+
 def _top_records_per_year(records: list[dict], per_year: int = 10) -> list[dict]:
     """Return top *per_year* records for each calendar year, preserving sort order.
 

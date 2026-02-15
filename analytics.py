@@ -178,6 +178,73 @@ def compute_gap_analysis(
     }
 
 
+def compute_activity_by_year(timestamps: list[datetime]) -> list[dict]:
+    """Compute per-year activity breakdown from message timestamps.
+
+    Returns list of dicts with Overall row first, then ascending years.
+    First/last years use actual message date boundaries; middle years use full calendar year.
+    """
+    if not timestamps:
+        return []
+
+    from datetime import date as date_type
+
+    sorted_ts = sorted(timestamps)
+    active_dates = set(ts.date() for ts in sorted_ts)
+    first_date = sorted_ts[0].date()
+    last_date = sorted_ts[-1].date()
+
+    # Group active dates by year
+    years_set: set[int] = set()
+    active_by_year: dict[int, set] = {}
+    for d in active_dates:
+        years_set.add(d.year)
+        active_by_year.setdefault(d.year, set()).add(d)
+
+    years = sorted(years_set)
+    rows = []
+
+    for yr in years:
+        if yr == first_date.year:
+            start = first_date
+        else:
+            start = date_type(yr, 1, 1)
+        if yr == last_date.year:
+            end = last_date
+        else:
+            end = date_type(yr, 12, 31)
+
+        total = (end - start).days + 1
+        active = len(active_by_year.get(yr, set()))
+        inactive = total - active
+        pct_active = round(active / total * 100, 1) if total > 0 else 0.0
+        pct_inactive = round(inactive / total * 100, 1) if total > 0 else 0.0
+
+        rows.append({
+            "year": str(yr),
+            "total_days": total,
+            "days_active": active,
+            "days_inactive": inactive,
+            "pct_active": pct_active,
+            "pct_inactive": pct_inactive,
+        })
+
+    # Overall row
+    overall_total = (last_date - first_date).days + 1
+    overall_active = len(active_dates)
+    overall_inactive = overall_total - overall_active
+    overall = {
+        "year": "Overall",
+        "total_days": overall_total,
+        "days_active": overall_active,
+        "days_inactive": overall_inactive,
+        "pct_active": round(overall_active / overall_total * 100, 1) if overall_total > 0 else 0.0,
+        "pct_inactive": round(overall_inactive / overall_total * 100, 1) if overall_total > 0 else 0.0,
+    }
+
+    return [overall] + rows
+
+
 def compute_summary_stats(
     summaries: list[dict], records: list[dict]
 ) -> dict[str, Any]:
@@ -492,7 +559,8 @@ def build_dashboard_payload(path: str = "conversations.json") -> dict[str, Any]:
     """One-call entry point: load, process, compute all stats for the dashboard.
 
     Returns dict with keys: generated_at, summary, charts, gaps (top 25/year),
-    gap_stats, monthly, weekly, hourly, length_distribution, comparison.
+    gap_stats, monthly, weekly, hourly, length_distribution, comparison,
+    activity_by_year.
     """
     convos = load_conversations(path)
     summaries, records, timestamps = process_conversations(convos)
@@ -517,6 +585,7 @@ def build_dashboard_payload(path: str = "conversations.json") -> dict[str, Any]:
         "hourly": compute_hourly_data(timestamps),
         "length_distribution": compute_length_distribution(summaries),
         "comparison": compute_period_comparison(records),
+        "activity_by_year": compute_activity_by_year(timestamps),
     }
 
 

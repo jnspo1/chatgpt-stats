@@ -9,12 +9,20 @@ The ChatGPT Stats analytics system provides both CLI and web dashboard modes:
 - **Web Dashboard**: Multi-page FastAPI service (port 8203, systemd unit `chatgpt-stats`) with 3 pages:
   - **Overview**: Summary cards, monthly usage chart, month-over-month comparison, conversation length histogram
   - **Trends**: Daily/weekly/monthly time-series charts with year scope filter pills and top days tables
-  - **Patterns**: 7x24 activity heatmap, hourly distribution, weekday vs weekend comparison, message gap analysis
-- **Analytics Engine**: 13 core computation functions covering summaries, trends, distributions, gaps, and comparative analysis
-- **Test Coverage**: 53 unit tests validating data processing edge cases, template rendering, and API endpoints
+  - **Patterns**: 7x24 activity heatmap, hourly distribution, weekday vs weekend comparison, per-year activity overview table, message gap analysis
+- **Analytics Engine**: 14 core computation functions covering summaries, trends, distributions, gaps, per-year breakdowns, and comparative analysis
+- **Test Coverage**: 58 unit tests validating data processing edge cases, template rendering, and API endpoints
 - **Infrastructure**: Nginx reverse proxy, 1-hour dashboard cache (thread-safe), ~100KB API payload with per-year bucketed rankings
 
 ## Unreleased
+
+#### 2026-02-15: Per-Year Activity Overview Table
+- **Added**: `compute_activity_by_year()` function in `analytics.py` that groups timestamps by calendar year and computes total_days, days_active, days_inactive, pct_active, pct_inactive per year with smart date boundaries (partial first/last years, full middle years) plus an Overall aggregate row
+- **Added**: Activity Overview section on Patterns page with table rendering calendar-year breakdowns and usage percentages for quick year-over-year comparison
+- **Changed**: Gap Analysis section simplified by removing static summary row; per-year stats now exposed via dedicated Activity Overview table
+- **Added**: 5 new unit tests in `TestComputeActivityByYear` class covering empty data, single timestamp, single year, multi-year scenarios, and percentage validation
+- **Updated**: `CLAUDE.md` with `compute_activity_by_year()` in analytics functions list
+- **Test Coverage**: 58 passing tests (up from 53)
 
 #### 2026-02-15: Multi-Page Dashboard with Advanced Analytics
 - **Added**: Split single-page dashboard into 3 focused pages — Overview (summary cards + monthly trends), Trends (daily/weekly/monthly granularity switcher + year filter pills), Patterns (activity heatmap + hourly distribution + weekday comparison)

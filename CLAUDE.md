@@ -45,7 +45,7 @@ python chat_gpt_summary.py
 
 ## Architecture
 
-- **analytics.py** — Core data processing module. Functions: `load_conversations`, `process_conversations`, `compute_gap_analysis`, `compute_summary_stats`, `compute_chart_data`, `compute_monthly_data`, `compute_weekly_data`, `compute_hourly_data`, `compute_length_distribution`, `compute_period_comparison`, `build_dashboard_payload`, `save_analytics_files`, `print_summary_report`
+- **analytics.py** — Core data processing module. Functions: `load_conversations`, `process_conversations`, `compute_gap_analysis`, `compute_activity_by_year`, `compute_summary_stats`, `compute_chart_data`, `compute_monthly_data`, `compute_weekly_data`, `compute_hourly_data`, `compute_length_distribution`, `compute_period_comparison`, `build_dashboard_payload`, `save_analytics_files`, `print_summary_report`
 - **app.py** — FastAPI service with Jinja2 templates (port 8203). Thread-safe in-memory cache with 1-hour TTL
 - **templates/base.html** — Shared Jinja2 base with nav, styles, Chart.js includes
 - **templates/overview.html** — Overview page (summary cards, monthly chart, comparison cards, length histogram)

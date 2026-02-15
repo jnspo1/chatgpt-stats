@@ -10,6 +10,7 @@ from analytics import (
     _expanding_avg,
     _rolling_avg,
     build_dashboard_payload,
+    compute_activity_by_year,
     compute_chart_data,
     compute_gap_analysis,
     compute_hourly_data,
@@ -222,6 +223,72 @@ class TestComputeGapAnalysis:
         assert result["total_days"] == 5
         assert result["days_active"] == 3
         assert result["days_inactive"] == 2
+
+
+# ── TestComputeActivityByYear ───────────────
+
+
+class TestComputeActivityByYear:
+    def test_empty_timestamps(self):
+        assert compute_activity_by_year([]) == []
+
+    def test_single_timestamp(self):
+        result = compute_activity_by_year([datetime(2024, 3, 15, 10, 0)])
+        assert len(result) == 2  # Overall + 1 year
+        overall = result[0]
+        assert overall["year"] == "Overall"
+        assert overall["total_days"] == 1
+        assert overall["days_active"] == 1
+        assert overall["days_inactive"] == 0
+
+    def test_single_year(self):
+        ts = [
+            datetime(2024, 1, 10, 10, 0),
+            datetime(2024, 1, 10, 14, 0),  # same day
+            datetime(2024, 1, 15, 10, 0),
+            datetime(2024, 1, 20, 10, 0),
+        ]
+        result = compute_activity_by_year(ts)
+        assert len(result) == 2  # Overall + 2024
+        overall = result[0]
+        assert overall["year"] == "Overall"
+        assert overall["total_days"] == 11  # Jan 10-20
+        assert overall["days_active"] == 3
+        assert overall["days_inactive"] == 8
+        yr = result[1]
+        assert yr["year"] == "2024"
+        assert yr["total_days"] == overall["total_days"]
+
+    def test_multi_year(self):
+        ts = [
+            datetime(2023, 6, 1, 10, 0),
+            datetime(2023, 12, 31, 10, 0),
+            datetime(2024, 3, 15, 10, 0),
+            datetime(2025, 2, 1, 10, 0),
+        ]
+        result = compute_activity_by_year(ts)
+        assert result[0]["year"] == "Overall"
+        years = [r["year"] for r in result[1:]]
+        assert years == ["2023", "2024", "2025"]
+        # 2023: Jun 1 to Dec 31 (partial first year)
+        assert result[1]["year"] == "2023"
+        assert result[1]["total_days"] == (datetime(2023, 12, 31).date() - datetime(2023, 6, 1).date()).days + 1
+        # 2024: full year (middle year)
+        assert result[2]["year"] == "2024"
+        assert result[2]["total_days"] == 366  # 2024 is a leap year
+        # 2025: Jan 1 to Feb 1 (partial last year)
+        assert result[3]["year"] == "2025"
+        assert result[3]["total_days"] == 32  # Jan 1 to Feb 1
+
+    def test_percentages_add_up(self):
+        ts = [
+            datetime(2024, 1, 1, 10, 0),
+            datetime(2024, 1, 5, 10, 0),
+            datetime(2024, 1, 10, 10, 0),
+        ]
+        result = compute_activity_by_year(ts)
+        for row in result:
+            assert row["pct_active"] + row["pct_inactive"] == pytest.approx(100.0, abs=0.2)
 
 
 # ── TestComputeSummaryStats ─────────────────
@@ -624,3 +691,5 @@ class TestBuildDashboardPayload:
         assert len(payload["monthly"]["months"]) >= 1
         assert len(payload["hourly"]["heatmap"]) == 7
         assert len(payload["length_distribution"]["buckets"]) == 6
+        assert "activity_by_year" in payload
+        assert len(payload["activity_by_year"]) >= 2  # Overall + at least 1 year

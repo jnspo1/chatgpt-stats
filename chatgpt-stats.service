@@ -1,0 +1,18 @@
+[Unit]
+Description=ChatGPT Statistics Dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/python/chatgpt_stats
+Environment="PATH=/home/pi/python/chatgpt_stats/venv/bin"
+ExecStart=/home/pi/python/chatgpt_stats/venv/bin/uvicorn app:app --host 127.0.0.1 --port 8203
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

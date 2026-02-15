@@ -36,6 +36,9 @@ ENV/
 .Trashes
 Thumbs.db
 
+# Test cache
+.pytest_cache/
+
 # Distribution / packaging
 build/
 dist/

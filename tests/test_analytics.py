@@ -15,6 +15,7 @@ from analytics import (
     compute_hourly_data,
     compute_length_distribution,
     compute_monthly_data,
+    compute_period_comparison,
     compute_summary_stats,
     compute_weekly_data,
     print_summary_report,
@@ -441,6 +442,39 @@ class TestComputeLengthDistribution:
         result = compute_length_distribution(summaries)
         assert result["counts"][0] == 3
         assert sum(result["counts"]) == 3
+
+
+# ── TestComputePeriodComparison ───────────
+
+
+class TestComputePeriodComparison:
+    def test_month_comparison(self):
+        records = [
+            {"date": "2024-01-15", "total_messages": 10, "total_chats": 2, "avg_messages_per_chat": 5.0, "max_messages_in_chat": 6},
+            {"date": "2024-01-20", "total_messages": 8, "total_chats": 1, "avg_messages_per_chat": 8.0, "max_messages_in_chat": 8},
+            {"date": "2024-02-05", "total_messages": 20, "total_chats": 5, "avg_messages_per_chat": 4.0, "max_messages_in_chat": 6},
+        ]
+        result = compute_period_comparison(records, reference_date="2024-02-15")
+        assert result["this_month"]["chats"] == 5
+        assert result["this_month"]["messages"] == 20
+        assert result["last_month"]["chats"] == 3
+        assert result["last_month"]["messages"] == 18
+
+    def test_year_comparison(self):
+        records = [
+            {"date": "2023-06-15", "total_messages": 100, "total_chats": 10, "avg_messages_per_chat": 10.0, "max_messages_in_chat": 15},
+            {"date": "2024-03-15", "total_messages": 50, "total_chats": 5, "avg_messages_per_chat": 10.0, "max_messages_in_chat": 12},
+        ]
+        result = compute_period_comparison(records, reference_date="2024-06-15")
+        assert result["this_year"]["chats"] == 5
+        assert result["last_year"]["chats"] == 10
+
+    def test_empty_periods(self):
+        result = compute_period_comparison([], reference_date="2024-02-15")
+        assert result["this_month"]["chats"] == 0
+        assert result["last_month"]["chats"] == 0
+        assert result["this_year"]["chats"] == 0
+        assert result["last_year"]["chats"] == 0
 
 
 # ── TestRollingAvg ──────────────────────────

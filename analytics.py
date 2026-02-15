@@ -394,6 +394,65 @@ def compute_length_distribution(summaries: list[dict]) -> dict[str, Any]:
     }
 
 
+def compute_period_comparison(
+    daily_records: list[dict],
+    reference_date: str | None = None,
+) -> dict[str, Any]:
+    """Compute month-over-month and year-over-year comparison stats."""
+    from datetime import date as date_type
+
+    if reference_date:
+        ref = date_type.fromisoformat(reference_date)
+    else:
+        ref = date_type.today()
+
+    this_month = f"{ref.year}-{ref.month:02d}"
+    if ref.month == 1:
+        last_month = f"{ref.year - 1}-12"
+    else:
+        last_month = f"{ref.year}-{ref.month - 1:02d}"
+    this_year = str(ref.year)
+    last_year = str(ref.year - 1)
+
+    def _zero():
+        return {"chats": 0, "messages": 0, "total_msgs": 0, "total_chats": 0}
+
+    buckets = {
+        "this_month": _zero(),
+        "last_month": _zero(),
+        "this_year": _zero(),
+        "last_year": _zero(),
+    }
+
+    for r in daily_records:
+        d = r["date"]
+        m = d[:7]
+        y = d[:4]
+        for key, match_val, match_field in [
+            ("this_month", this_month, m),
+            ("last_month", last_month, m),
+            ("this_year", this_year, y),
+            ("last_year", last_year, y),
+        ]:
+            if match_field == match_val:
+                buckets[key]["chats"] += r["total_chats"]
+                buckets[key]["messages"] += r["total_messages"]
+                buckets[key]["total_msgs"] += r["total_messages"]
+                buckets[key]["total_chats"] += r["total_chats"]
+
+    result = {}
+    for key in ["this_month", "last_month", "this_year", "last_year"]:
+        b = buckets[key]
+        avg = round(b["total_msgs"] / b["total_chats"], 2) if b["total_chats"] > 0 else 0
+        result[key] = {
+            "chats": b["chats"],
+            "messages": b["messages"],
+            "avg_messages": avg,
+        }
+
+    return result
+
+
 def _top_records_per_year(records: list[dict], per_year: int = 10) -> list[dict]:
     """Return top *per_year* records for each calendar year, preserving sort order.
 

@@ -4,6 +4,13 @@ All notable changes to the ChatGPT Statistics project will be documented in this
 
 ## Unreleased
 
+#### 2026-02-15: Year Filter Pills for Dashboard Tables
+- **Added**: Year filter UI with pill buttons (2023–2026 + All) to all three bottom tables on the web dashboard for quick year-based filtering
+- **Added**: `_top_records_per_year()` and `_top_gaps_per_year()` helper functions in `analytics.py` to compute per-year bucketed top-N data instead of global rankings
+- **Changed**: Backend now sends top-10-per-year for daily records and top-25-per-year for message gaps, reducing payload from 2MB+ to ~99KB for optimal frontend filtering
+- **Changed**: Frontend filtering logic now applies `.slice(0, N)` after year selection to ensure each year shows its true top records rather than pre-filtered globals
+- **Added**: CSS pill styling and `createPillBar()` JavaScript function with safe DOM clearing via `clearChildren()` utility
+
 #### 2026-02-15: Code Review Fixes
 - **Fixed**: Cache race condition in `app.py` — rebuild now happens inside the lock to prevent concurrent 15s parses
 - **Fixed**: Missing error handling for `conversations.json` not found or invalid JSON in both `app.py` (HTTPException) and `chat_gpt_summary.py` (stderr + sys.exit)

@@ -12,6 +12,7 @@ from analytics import (
     build_dashboard_payload,
     compute_chart_data,
     compute_gap_analysis,
+    compute_hourly_data,
     compute_monthly_data,
     compute_summary_stats,
     compute_weekly_data,
@@ -367,6 +368,49 @@ class TestComputeWeeklyData:
         result = compute_weekly_data(records)
         assert len(result["chats_avg_4w"]) == len(result["weeks"])
         assert len(result["chats_avg_12w"]) == len(result["weeks"])
+
+
+# ── TestComputeHourlyData ─────────────────
+
+
+class TestComputeHourlyData:
+    def test_heatmap_dimensions(self):
+        ts = [
+            datetime(2024, 1, 15, 10, 30),  # Monday, hour 10
+            datetime(2024, 1, 15, 10, 45),  # Monday, hour 10
+            datetime(2024, 1, 16, 14, 0),   # Tuesday, hour 14
+        ]
+        result = compute_hourly_data(ts)
+        assert len(result["heatmap"]) == 7
+        assert len(result["heatmap"][0]) == 24
+        assert result["heatmap"][0][10] == 2  # Monday, hour 10
+        assert result["heatmap"][1][14] == 1  # Tuesday, hour 14
+
+    def test_hourly_totals(self):
+        ts = [
+            datetime(2024, 1, 15, 10, 30),
+            datetime(2024, 1, 16, 10, 0),
+            datetime(2024, 1, 17, 14, 0),
+        ]
+        result = compute_hourly_data(ts)
+        assert result["hourly_totals"][10] == 2
+        assert result["hourly_totals"][14] == 1
+        assert len(result["hourly_totals"]) == 24
+
+    def test_empty_timestamps(self):
+        result = compute_hourly_data([])
+        assert len(result["heatmap"]) == 7
+        assert all(all(v == 0 for v in row) for row in result["heatmap"])
+
+    def test_weekday_totals(self):
+        ts = [
+            datetime(2024, 1, 15, 10, 0),  # Monday
+            datetime(2024, 1, 15, 11, 0),  # Monday
+            datetime(2024, 1, 20, 10, 0),  # Saturday
+        ]
+        result = compute_hourly_data(ts)
+        assert result["weekday_totals"][0] == 2  # Monday
+        assert result["weekday_totals"][5] == 1  # Saturday
 
 
 # ── TestRollingAvg ──────────────────────────

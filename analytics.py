@@ -349,6 +349,26 @@ def compute_weekly_data(daily_records: list[dict]) -> dict[str, Any]:
     }
 
 
+def compute_hourly_data(timestamps: list[datetime]) -> dict[str, Any]:
+    """Compute hour-of-day x day-of-week activity grid from timestamps."""
+    heatmap = [[0] * 24 for _ in range(7)]  # [weekday][hour]
+    hourly_totals = [0] * 24
+    weekday_totals = [0] * 7
+
+    for ts in timestamps:
+        weekday = ts.weekday()  # 0=Monday
+        hour = ts.hour
+        heatmap[weekday][hour] += 1
+        hourly_totals[hour] += 1
+        weekday_totals[weekday] += 1
+
+    return {
+        "heatmap": heatmap,
+        "hourly_totals": hourly_totals,
+        "weekday_totals": weekday_totals,
+    }
+
+
 def _top_records_per_year(records: list[dict], per_year: int = 10) -> list[dict]:
     """Return top *per_year* records for each calendar year, preserving sort order.
 

@@ -2,7 +2,27 @@
 
 All notable changes to the ChatGPT Statistics project will be documented in this file.
 
+## Current State
+
+The ChatGPT Stats analytics system provides both CLI and web dashboard modes:
+- **CLI**: `chat_gpt_summary.py` processes `conversations.json` and generates CSV/JSON files to `chat_analytics/`
+- **Web Dashboard**: Multi-page FastAPI service (port 8203, systemd unit `chatgpt-stats`) with 3 pages:
+  - **Overview**: Summary cards, monthly usage chart, month-over-month comparison, conversation length histogram
+  - **Trends**: Daily/weekly/monthly time-series charts with year scope filter pills and top days tables
+  - **Patterns**: 7x24 activity heatmap, hourly distribution, weekday vs weekend comparison, message gap analysis
+- **Analytics Engine**: 13 core computation functions covering summaries, trends, distributions, gaps, and comparative analysis
+- **Test Coverage**: 53 unit tests validating data processing edge cases, template rendering, and API endpoints
+- **Infrastructure**: Nginx reverse proxy, 1-hour dashboard cache (thread-safe), ~100KB API payload with per-year bucketed rankings
+
 ## Unreleased
+
+#### 2026-02-15: Multi-Page Dashboard with Advanced Analytics
+- **Added**: Split single-page dashboard into 3 focused pages — Overview (summary cards + monthly trends), Trends (daily/weekly/monthly granularity switcher + year filter pills), Patterns (activity heatmap + hourly distribution + weekday comparison)
+- **Added**: 5 new analytics functions: `compute_monthly_data()`, `compute_weekly_data()`, `compute_hourly_data()`, `compute_length_distribution()`, `compute_period_comparison()` for enhanced time-series, distribution, and comparative analysis
+- **Added**: Template inheritance system with `base.html` + 3 page templates (`overview.html`, `trends.html`, `patterns.html`) for maintainable multi-page layout
+- **Changed**: Dashboard routes now serve `/`, `/trends/`, `/patterns/` with shared cache and navigation UI
+- **Added**: 17 new tests bringing test suite from 36 to 53 tests, covering all new analytics functions and edge cases
+- **Updated**: `CLAUDE.md` with expanded architecture docs reflecting new page structure and analytics functions
 
 #### 2026-02-15: Year Filter Pills for Dashboard Tables
 - **Added**: Year filter UI with pill buttons (2023–2026 + All) to all three bottom tables on the web dashboard for quick year-based filtering

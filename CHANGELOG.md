@@ -16,6 +16,12 @@ The ChatGPT Stats analytics system provides both CLI and web dashboard modes:
 
 ## Unreleased
 
+#### 2026-02-16: PWA Home Screen Support
+- **Added**: Apple touch icon link and app title meta tags to `base.html` for iOS home screen installation with "ChatGPT Stats" display name
+- **Added**: `/app_icon.jpg` endpoint in `app.py` serving cached icon file for iPhone home screen display
+- **Added**: Standalone mode meta tags to enable full-screen app mode without Safari chrome on iOS and Android
+- **Changed**: Updated `base.html` with proper meta tags for `apple-mobile-web-app-title`, `application-name`, and `mobile-web-app-capable`
+
 #### 2026-02-15: Per-Year Activity Overview Table
 - **Added**: `compute_activity_by_year()` function in `analytics.py` that groups timestamps by calendar year and computes total_days, days_active, days_inactive, pct_active, pct_inactive per year with smart date boundaries (partial first/last years, full middle years) plus an Overall aggregate row
 - **Added**: Activity Overview section on Patterns page with table rendering calendar-year breakdowns and usage percentages for quick year-over-year comparison

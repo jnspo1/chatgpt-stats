@@ -491,8 +491,8 @@ def _top_gaps_per_year(gaps: list[dict], per_year: int = 25) -> list[dict]:
 def build_dashboard_payload(path: str = "conversations.json") -> dict[str, Any]:
     """One-call entry point: load, process, compute all stats for the dashboard.
 
-    Returns dict with keys: generated_at, summary, charts, gaps (top 20),
-    gap_stats.
+    Returns dict with keys: generated_at, summary, charts, gaps (top 25/year),
+    gap_stats, monthly, weekly, hourly, length_distribution, comparison.
     """
     convos = load_conversations(path)
     summaries, records, timestamps = process_conversations(convos)
@@ -512,6 +512,11 @@ def build_dashboard_payload(path: str = "conversations.json") -> dict[str, Any]:
             "proportion_inactive": gap_data["proportion_inactive"],
             "longest_gap": gap_data["longest_gap"],
         },
+        "monthly": compute_monthly_data(records),
+        "weekly": compute_weekly_data(records),
+        "hourly": compute_hourly_data(timestamps),
+        "length_distribution": compute_length_distribution(summaries),
+        "comparison": compute_period_comparison(records),
     }
 
 

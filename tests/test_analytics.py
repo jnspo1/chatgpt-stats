@@ -613,3 +613,14 @@ class TestBuildDashboardPayload:
         # Verify chart sub-keys exist
         assert "avg_7d" in payload["charts"]["chats"]
         assert "avg_lifetime" in payload["charts"]["total_messages"]
+
+        # New multi-page data
+        assert "monthly" in payload
+        assert "weekly" in payload
+        assert "hourly" in payload
+        assert "length_distribution" in payload
+        assert "comparison" in payload
+
+        assert len(payload["monthly"]["months"]) >= 1
+        assert len(payload["hourly"]["heatmap"]) == 7
+        assert len(payload["length_distribution"]["buckets"]) == 6

@@ -6,6 +6,7 @@ Used by both the CLI (chat_gpt_summary.py) and the web dashboard (app.py).
 
 from __future__ import annotations
 
+import calendar
 import csv
 import json
 import logging
@@ -516,6 +517,23 @@ def compute_period_comparison(
             "messages": b["messages"],
             "avg_messages": avg,
         }
+
+    # Pro-rata projection for current (partial) periods
+    month_total_days = calendar.monthrange(ref.year, ref.month)[1]
+    month_elapsed = ref.day
+    year_total_days = 366 if calendar.isleap(ref.year) else 365
+    year_elapsed = (ref - date_type(ref.year, 1, 1)).days + 1
+
+    for key, elapsed, total in [
+        ("this_month", month_elapsed, month_total_days),
+        ("this_year", year_elapsed, year_total_days),
+    ]:
+        r = result[key]
+        r["elapsed_days"] = elapsed
+        r["total_days"] = total
+        factor = total / elapsed if elapsed > 0 else 1
+        r["projected_chats"] = round(r["chats"] * factor, 2)
+        r["projected_messages"] = round(r["messages"] * factor, 2)
 
     return result
 

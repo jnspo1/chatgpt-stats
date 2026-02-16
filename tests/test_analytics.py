@@ -543,6 +543,66 @@ class TestComputePeriodComparison:
         assert result["this_year"]["chats"] == 0
         assert result["last_year"]["chats"] == 0
 
+    def test_prorata_month_projection(self):
+        """Mid-month: projected values scale up to full month."""
+        records = [
+            {"date": "2024-02-05", "total_messages": 20, "total_chats": 5,
+             "avg_messages_per_chat": 4.0, "max_messages_in_chat": 6},
+            {"date": "2024-02-10", "total_messages": 10, "total_chats": 3,
+             "avg_messages_per_chat": 3.33, "max_messages_in_chat": 5},
+        ]
+        # Reference date is Feb 15 → 15 days elapsed of 29 (2024 is leap year)
+        result = compute_period_comparison(records, reference_date="2024-02-15")
+        tm = result["this_month"]
+        assert tm["chats"] == 8
+        assert tm["messages"] == 30
+        assert tm["elapsed_days"] == 15
+        assert tm["total_days"] == 29  # Feb 2024 is 29 days (leap year)
+        # projected_chats = 8 * (29 / 15) ≈ 15.47 → rounded to 2dp
+        assert tm["projected_chats"] == pytest.approx(8 * 29 / 15, abs=0.01)
+        assert tm["projected_messages"] == pytest.approx(30 * 29 / 15, abs=0.01)
+
+    def test_prorata_year_projection(self):
+        """Partial year: projected values scale up to full year."""
+        records = [
+            {"date": "2024-01-15", "total_messages": 50, "total_chats": 10,
+             "avg_messages_per_chat": 5.0, "max_messages_in_chat": 8},
+        ]
+        # Reference date is Feb 15, 2024 → 46 days elapsed of 366 (leap year)
+        result = compute_period_comparison(records, reference_date="2024-02-15")
+        ty = result["this_year"]
+        assert ty["chats"] == 10
+        assert ty["messages"] == 50
+        assert ty["elapsed_days"] == 46
+        assert ty["total_days"] == 366  # 2024 is leap year
+        assert ty["projected_chats"] == pytest.approx(10 * 366 / 46, abs=0.01)
+
+    def test_prorata_last_periods_have_no_projection(self):
+        """Last month/year are complete periods — no projection fields."""
+        records = [
+            {"date": "2024-01-15", "total_messages": 10, "total_chats": 2,
+             "avg_messages_per_chat": 5.0, "max_messages_in_chat": 6},
+        ]
+        result = compute_period_comparison(records, reference_date="2024-02-15")
+        lm = result["last_month"]
+        ly = result["last_year"]
+        assert "projected_chats" not in lm
+        assert "projected_chats" not in ly
+        assert "elapsed_days" not in lm
+        assert "elapsed_days" not in ly
+
+    def test_prorata_day_one_of_month(self):
+        """Day 1: elapsed=1, projection multiplier is large but correct."""
+        records = [
+            {"date": "2024-03-01", "total_messages": 5, "total_chats": 1,
+             "avg_messages_per_chat": 5.0, "max_messages_in_chat": 5},
+        ]
+        result = compute_period_comparison(records, reference_date="2024-03-01")
+        tm = result["this_month"]
+        assert tm["elapsed_days"] == 1
+        assert tm["total_days"] == 31  # March
+        assert tm["projected_chats"] == pytest.approx(1 * 31 / 1, abs=0.01)
+
 
 # ── TestRollingAvg ──────────────────────────
 

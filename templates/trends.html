@@ -78,7 +78,7 @@
 
   // ── State ──
   var currentGranularity = 'weekly';
-  var currentYear = 'All';
+  var selectedYears = ['All'];
   var chartInstances = [];
 
   // ── Data extraction by granularity ──
@@ -136,11 +136,12 @@
   }
 
   // ── Year filtering ──
-  function filterByYear(dates, arrays, year) {
-    if (year === 'All') return { dates: dates, arrays: arrays };
+  function filterByYear(dates, arrays, years) {
+    if (years.indexOf('All') >= 0 || years.length === 0) return { dates: dates, arrays: arrays };
     var filtered = { dates: [], arrays: arrays.map(function() { return []; }) };
     for (var i = 0; i < dates.length; i++) {
-      if (dates[i].substring(0, 4) === year) {
+      var yr = dates[i].substring(0, 4);
+      if (years.indexOf(yr) >= 0) {
         filtered.dates.push(dates[i]);
         for (var j = 0; j < arrays.length; j++) {
           filtered.arrays[j].push(arrays[j][i]);
@@ -215,7 +216,7 @@
     ds.avg_messages.lines.forEach(function(l) { allArrays.push(l.data); });
     ds.total_messages.lines.forEach(function(l) { allArrays.push(l.data); });
 
-    var f = filterByYear(ds.dates, allArrays, currentYear);
+    var f = filterByYear(ds.dates, allArrays, selectedYears);
     var idx = 0;
 
     var chatsValues = f.arrays[idx++];
@@ -231,8 +232,8 @@
     chartInstances.push(buildChart('chart-total-messages', f.dates, totalMsgsValues, 'rgba(224,138,122,0.5)', 'Messages', totalMsgsLines));
   }
 
-  // ── Pill Bars ──
-  function createPills(containerId, options, defaultVal, onChange) {
+  // ── Single-select pills (granularity) ──
+  function createSinglePills(containerId, options, defaultVal, onChange) {
     var bar = document.getElementById(containerId);
     options.forEach(function(opt) {
       var pill = txt('span', opt, 'pill' + (opt === defaultVal ? ' active' : ''));
@@ -245,21 +246,74 @@
     });
   }
 
-  createPills('granularity-pills', ['Daily', 'Weekly', 'Monthly'], 'Weekly', function(val) {
+  // ── Multi-select pills (years) ──
+  function createMultiPills(containerId, options, onChange) {
+    var bar = document.getElementById(containerId);
+    var allPill = null;
+
+    function getSelected() {
+      var selected = [];
+      bar.querySelectorAll('.pill').forEach(function(p) {
+        if (p.classList.contains('active') && p.textContent !== 'All') {
+          selected.push(p.textContent);
+        }
+      });
+      return selected;
+    }
+
+    function syncAllPill() {
+      var yearPills = bar.querySelectorAll('.pill:not([data-all])');
+      var allActive = true;
+      yearPills.forEach(function(p) { if (!p.classList.contains('active')) allActive = false; });
+      if (allActive || getSelected().length === 0) {
+        allPill.classList.add('active');
+        yearPills.forEach(function(p) { p.classList.add('active'); });
+      } else {
+        allPill.classList.remove('active');
+      }
+    }
+
+    options.forEach(function(opt) {
+      var pill = txt('span', opt, 'pill active');
+      if (opt === 'All') {
+        pill.setAttribute('data-all', 'true');
+        allPill = pill;
+        pill.addEventListener('click', function() {
+          bar.querySelectorAll('.pill').forEach(function(p) { p.classList.add('active'); });
+          onChange(['All']);
+        });
+      } else {
+        pill.addEventListener('click', function() {
+          pill.classList.toggle('active');
+          var selected = getSelected();
+          if (selected.length === 0) {
+            allPill.classList.add('active');
+            bar.querySelectorAll('.pill:not([data-all])').forEach(function(p) { p.classList.add('active'); });
+            onChange(['All']);
+          } else {
+            syncAllPill();
+            onChange(selected);
+          }
+        });
+      }
+      bar.appendChild(pill);
+    });
+  }
+
+  createSinglePills('granularity-pills', ['Daily', 'Weekly', 'Monthly'], 'Weekly', function(val) {
     currentGranularity = val.toLowerCase();
     renderCharts();
   });
 
   var years = ['All'];
-  // Auto-detect years from the data
   if (D.charts && D.charts.dates) {
     var yearSet = {};
     D.charts.dates.forEach(function(d) { yearSet[d.substring(0, 4)] = true; });
     Object.keys(yearSet).sort().forEach(function(y) { years.push(y); });
   }
 
-  createPills('year-pills', years, 'All', function(val) {
-    currentYear = val;
+  createMultiPills('year-pills', years, function(selected) {
+    selectedYears = selected;
     renderCharts();
     renderTopTables();
   });
@@ -270,9 +324,9 @@
   // ── Top Days Tables ──
   var TOP_DAYS_LIMIT = 10;
 
-  function filterTableByYear(rows, year, dateKey) {
-    if (year === 'All') return rows;
-    return rows.filter(function(r) { return r[dateKey].substring(0, 4) === year; });
+  function filterTableByYear(rows, years, dateKey) {
+    if (years.indexOf('All') >= 0 || years.length === 0) return rows;
+    return rows.filter(function(r) { return years.indexOf(r[dateKey].substring(0, 4)) >= 0; });
   }
 
   function renderTopTable(containerId, title, rows, valueKey, valueLabel) {
@@ -290,7 +344,7 @@
     table.appendChild(thead);
 
     var tbody = document.createElement('tbody');
-    var filtered = filterTableByYear(rows, currentYear, 'date').slice(0, TOP_DAYS_LIMIT);
+    var filtered = filterTableByYear(rows, selectedYears, 'date').slice(0, TOP_DAYS_LIMIT);
     filtered.forEach(function(r, i) {
       var tr = document.createElement('tr');
       tr.appendChild(txt('td', String(i + 1), 'rank'));

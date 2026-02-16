@@ -424,7 +424,7 @@
   var gs = D.gap_stats || {};
   var gapsEl = document.getElementById('gaps-table');
   var TOP_GAPS_LIMIT = 20;
-  var currentGapYear = 'All';
+  var selectedGapYears = ['All'];
 
   if (D.gaps && D.gaps.length) {
     var titleEl = txt('h3', 'Longest Gaps');
@@ -444,16 +444,57 @@
     var gapYears = ['All'];
     Object.keys(gapYearSet).sort().forEach(function(y) { gapYears.push(y); });
 
-    // Pill bar
+    // Pill bar (multi-select)
     var pillBar = el('div', { className: 'pill-bar' });
-    gapYears.forEach(function(yr) {
-      var pill = txt('span', yr, 'pill' + (yr === 'All' ? ' active' : ''));
-      pill.addEventListener('click', function() {
-        pillBar.querySelectorAll('.pill').forEach(function(p) { p.classList.remove('active'); });
-        pill.classList.add('active');
-        currentGapYear = yr;
-        renderGapRows();
+    var allGapPill = null;
+
+    function getSelectedGapYears() {
+      var selected = [];
+      pillBar.querySelectorAll('.pill').forEach(function(p) {
+        if (p.classList.contains('active') && p.textContent !== 'All') {
+          selected.push(p.textContent);
+        }
       });
+      return selected;
+    }
+
+    function syncGapAllPill() {
+      var yearPills = pillBar.querySelectorAll('.pill:not([data-all])');
+      var allActive = true;
+      yearPills.forEach(function(p) { if (!p.classList.contains('active')) allActive = false; });
+      if (allActive || getSelectedGapYears().length === 0) {
+        allGapPill.classList.add('active');
+        yearPills.forEach(function(p) { p.classList.add('active'); });
+      } else {
+        allGapPill.classList.remove('active');
+      }
+    }
+
+    gapYears.forEach(function(yr) {
+      var pill = txt('span', yr, 'pill active');
+      if (yr === 'All') {
+        pill.setAttribute('data-all', 'true');
+        allGapPill = pill;
+        pill.addEventListener('click', function() {
+          pillBar.querySelectorAll('.pill').forEach(function(p) { p.classList.add('active'); });
+          selectedGapYears = ['All'];
+          renderGapRows();
+        });
+      } else {
+        pill.addEventListener('click', function() {
+          pill.classList.toggle('active');
+          var selected = getSelectedGapYears();
+          if (selected.length === 0) {
+            allGapPill.classList.add('active');
+            pillBar.querySelectorAll('.pill:not([data-all])').forEach(function(p) { p.classList.add('active'); });
+            selectedGapYears = ['All'];
+          } else {
+            syncGapAllPill();
+            selectedGapYears = selected;
+          }
+          renderGapRows();
+        });
+      }
       pillBar.appendChild(pill);
     });
     gapsEl.appendChild(pillBar);
@@ -472,16 +513,16 @@
     table.appendChild(gapTbody);
     gapsEl.appendChild(table);
 
-    function filterGapsByYear(gaps, year) {
-      if (year === 'All') return gaps;
+    function filterGapsByYear(gaps, years) {
+      if (years.indexOf('All') >= 0 || years.length === 0) return gaps;
       return gaps.filter(function(g) {
-        return g.start_timestamp.substring(0, 4) === year;
+        return years.indexOf(g.start_timestamp.substring(0, 4)) >= 0;
       });
     }
 
     function renderGapRows() {
       clearChildren(gapTbody);
-      var filtered = filterGapsByYear(D.gaps, currentGapYear).slice(0, TOP_GAPS_LIMIT);
+      var filtered = filterGapsByYear(D.gaps, selectedGapYears).slice(0, TOP_GAPS_LIMIT);
       filtered.forEach(function(g, i) {
         var tr = document.createElement('tr');
         tr.appendChild(txt('td', String(i + 1), 'rank'));

@@ -7,14 +7,22 @@ All notable changes to the ChatGPT Statistics project will be documented in this
 The ChatGPT Stats analytics system provides both CLI and web dashboard modes:
 - **CLI**: `chat_gpt_summary.py` processes `conversations.json` and generates CSV/JSON files to `chat_analytics/`
 - **Web Dashboard**: Multi-page FastAPI service (port 8203, systemd unit `chatgpt-stats`) with 3 pages:
-  - **Overview**: Summary cards, monthly usage chart, month-over-month comparison, conversation length histogram
-  - **Trends**: Daily/weekly/monthly time-series charts with year scope filter pills and top days tables
-  - **Patterns**: 7x24 activity heatmap, hourly distribution, weekday vs weekend comparison, per-year activity overview table, message gap analysis
-- **Analytics Engine**: 14 core computation functions covering summaries, trends, distributions, gaps, per-year breakdowns, and comparative analysis
+  - **Overview**: Summary cards, monthly usage chart, month-over-month comparison with pro-rata projections, conversation length histogram
+  - **Trends**: Daily/weekly/monthly time-series charts with multi-select year pills (toggle individual years or "All"), top days tables
+  - **Patterns**: 7x24 activity heatmap, hourly distribution, weekday vs weekend comparison, per-year activity overview table, gap analysis with multi-select year pills
+- **Pro-Rata Analytics**: Comparison cards compute elapsed/total days and project chat/message counts to full months/years for in-progress periods
+- **Analytics Engine**: 14 core computation functions covering summaries, trends, distributions, gaps, per-year breakdowns, and comparative analysis with pro-rata projections
 - **Test Coverage**: 58 unit tests validating data processing edge cases, template rendering, and API endpoints
 - **Infrastructure**: Nginx reverse proxy, 1-hour dashboard cache (thread-safe), ~100KB API payload with per-year bucketed rankings
 
 ## Unreleased
+
+#### 2026-02-16: Pro-Rata Projections & Multi-Select Year Filters
+- **Added**: Pro-rata projection logic to `compute_period_comparison()` — calculates elapsed_days, total_days, projected_chats, and projected_messages for incomplete periods (this_month, this_year) to estimate full-month/full-year activity
+- **Added**: Comparison cards on Overview page now display "X of Y days" subtitles and projected values (≈N suffix) for in-progress periods, with percentage change calculated using projected figures for meaningful trends
+- **Changed**: Removed G icon from header (`base.html`) — deleted `.header-mark` CSS class and icon element for cleaner UI
+- **Added**: Multi-select year pills on Trends page — year buttons now toggle individually instead of exclusive selection, "All" auto-syncs when toggling all years or none
+- **Added**: Multi-select year pills on Patterns page (gap analysis section) — consistent toggle behavior across dashboard, enabling simultaneous view of multiple years' data
 
 #### 2026-02-16: PWA Home Screen Support
 - **Added**: Apple touch icon link and app title meta tags to `base.html` for iOS home screen installation with "ChatGPT Stats" display name

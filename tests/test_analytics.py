@@ -753,3 +753,17 @@ class TestBuildDashboardPayload:
         assert len(payload["length_distribution"]["buckets"]) == 6
         assert "activity_by_year" in payload
         assert len(payload["activity_by_year"]) >= 2  # Overall + at least 1 year
+
+        # Content analytics data
+        assert "content_charts" in payload
+        assert "content_weekly" in payload
+        assert "content_monthly" in payload
+        assert "code_stats" in payload
+        assert "content_summary" in payload
+        assert "avg_user_words" in payload["content_charts"]
+        assert "avg_asst_words" in payload["content_charts"]
+        assert "response_ratio" in payload["content_charts"]
+        assert "code_pct_user" in payload["content_charts"]
+        assert payload["content_summary"]["avg_user_words"] >= 0
+        assert payload["content_summary"]["avg_response_ratio"] >= 0
+        assert isinstance(payload["code_stats"]["language_counts"], list)

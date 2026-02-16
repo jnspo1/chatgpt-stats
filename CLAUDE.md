@@ -45,12 +45,12 @@ python chat_gpt_summary.py
 
 ## Architecture
 
-- **analytics.py** — Core data processing module. Functions: `load_conversations`, `process_conversations`, `compute_gap_analysis`, `compute_activity_by_year`, `compute_summary_stats`, `compute_chart_data`, `compute_monthly_data`, `compute_weekly_data`, `compute_hourly_data`, `compute_length_distribution`, `compute_period_comparison`, `build_dashboard_payload`, `save_analytics_files`, `print_summary_report`
+- **analytics.py** — Core data processing module. Functions: `load_conversations`, `process_conversations`, `compute_gap_analysis`, `compute_activity_by_year`, `compute_summary_stats`, `compute_chart_data`, `compute_monthly_data`, `compute_weekly_data`, `compute_hourly_data`, `compute_content_chart_data`, `compute_content_weekly_data`, `compute_content_monthly_data`, `compute_code_stats`, `compute_length_distribution`, `compute_period_comparison`, `build_dashboard_payload`, `save_analytics_files`, `print_summary_report`
 - **app.py** — FastAPI service with Jinja2 templates (port 8203). Thread-safe in-memory cache with 1-hour TTL
 - **templates/base.html** — Shared Jinja2 base with nav, styles, Chart.js includes
-- **templates/overview.html** — Overview page (summary cards, monthly chart, comparison cards, length histogram)
-- **templates/trends.html** — Trends page (3 charts with daily/weekly/monthly granularity, year pills, top days tables)
-- **templates/patterns.html** — Patterns page (7x24 heatmap, hourly bar chart, weekday comparison, gap analysis)
+- **templates/overview.html** — Overview page (summary cards incl. content metrics, monthly chart, comparison cards, length histogram)
+- **templates/trends.html** — Trends page (6 charts: 3 usage + 3 content with daily/weekly/monthly granularity, year pills, top days tables)
+- **templates/patterns.html** — Patterns page (7x24 heatmap, hourly bar chart, weekday comparison, code language chart, gap analysis)
 - **chat_gpt_summary.py** — Thin CLI wrapper around analytics.py
 - **chat_gpt_history.py** — Extracts user prompts from conversation JSON
 - **chat_gpt_export.py** — Interactive conversation exporter (requires terminal input)

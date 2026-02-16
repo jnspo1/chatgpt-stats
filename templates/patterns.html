@@ -143,6 +143,15 @@
 </section>
 
 <section class="chart-section fade-in">
+  <h2>Code Analysis</h2>
+  <div class="chart-box">
+    <div id="code-stat-line" style="font-size: 13px; color: var(--text-dim); margin-bottom: 12px;"></div>
+    <h3>Top Languages</h3>
+    <canvas id="chart-code-languages" style="max-height: 340px;"></canvas>
+  </div>
+</section>
+
+<section class="chart-section fade-in">
   <h2>Activity Overview</h2>
   <div class="table-box" id="activity-table"></div>
 </section>
@@ -385,7 +394,56 @@
     compContainer.appendChild(weCard);
   }
 
-  // ── 4. Activity Overview Table ──
+  // ── 4. Code Languages Chart ──
+  var codeStats = D.code_stats;
+  if (codeStats && codeStats.language_counts && codeStats.language_counts.length) {
+    var statLine = document.getElementById('code-stat-line');
+    statLine.textContent = codeStats.pct_with_code + '% of conversations include code blocks (' + codeStats.total_conversations_with_code.toLocaleString() + ' conversations)';
+
+    var top10 = codeStats.language_counts.slice(0, 10);
+    var langLabels = top10.map(function(l) { return l.language; });
+    var langCounts = top10.map(function(l) { return l.count; });
+
+    var langCtx = document.getElementById('chart-code-languages').getContext('2d');
+    new Chart(langCtx, {
+      type: 'bar',
+      data: {
+        labels: langLabels,
+        datasets: [{
+          label: 'Conversations',
+          data: langCounts,
+          backgroundColor: 'rgba(229,165,75,0.7)',
+          borderWidth: 0,
+          barPercentage: 0.7,
+          categoryPercentage: 0.85,
+        }],
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: '#1e2029', borderColor: '#2a2d3a', borderWidth: 1,
+            bodyFont: { size: 12 }, padding: 10,
+            callbacks: {
+              label: function(ctx) { return ctx.parsed.x.toLocaleString() + ' conversations'; }
+            },
+          },
+        },
+        scales: {
+          x: { beginAtZero: true, grid: { color: '#1e2029' }, ticks: { precision: 0 } },
+          y: { grid: { display: false }, ticks: { font: { family: "'JetBrains Mono', monospace", size: 11 } } },
+        },
+      },
+    });
+  } else {
+    var statLine = document.getElementById('code-stat-line');
+    if (statLine) statLine.textContent = 'No code blocks detected in conversations.';
+  }
+
+  // ── 5. Activity Overview Table ──
   var activityData = D.activity_by_year;
   if (activityData && activityData.length) {
     var actEl = document.getElementById('activity-table');
@@ -420,7 +478,7 @@
     actEl.appendChild(tbl);
   }
 
-  // ── 5. Gap Analysis Table ──
+  // ── 6. Gap Analysis Table ──
   var gs = D.gap_stats || {};
   var gapsEl = document.getElementById('gaps-table');
   var TOP_GAPS_LIMIT = 20;

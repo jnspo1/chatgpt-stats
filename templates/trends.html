@@ -28,6 +28,18 @@
     <h3>Total Messages</h3>
     <canvas id="chart-total-messages"></canvas>
   </div>
+  <div class="chart-box">
+    <h3>Message Length Over Time</h3>
+    <canvas id="chart-msg-length"></canvas>
+  </div>
+  <div class="chart-box">
+    <h3>Response Ratio Over Time</h3>
+    <canvas id="chart-response-ratio"></canvas>
+  </div>
+  <div class="chart-box">
+    <h3>Code Block Usage Over Time</h3>
+    <canvas id="chart-code-usage"></canvas>
+  </div>
 </section>
 
 <section class="chart-section fade-in">
@@ -82,6 +94,20 @@
   var chartInstances = [];
 
   // ── Data extraction by granularity ──
+  function getContentSource(granularity) {
+    if (granularity === 'daily') return D.content_charts;
+    if (granularity === 'weekly') return D.content_weekly;
+    return D.content_monthly;
+  }
+
+  function getContentDates(granularity) {
+    var src = getContentSource(granularity);
+    if (!src) return [];
+    if (granularity === 'monthly') return (src.months || []).map(function(m) { return m + '-01'; });
+    if (granularity === 'weekly') return src.weeks || [];
+    return src.dates || [];
+  }
+
   function getDatasets(granularity) {
     if (granularity === 'daily') {
       return {
@@ -197,6 +223,62 @@
     return chart;
   }
 
+  // ── Build a line-only chart (for content metrics) ──
+  function buildLineChart(canvasId, dates, seriesList, opts) {
+    var ctx = document.getElementById(canvasId).getContext('2d');
+    var labels = dates.map(function(d) { return d.indexOf('T') >= 0 ? d : d + 'T00:00:00'; });
+    opts = opts || {};
+
+    var datasets = [];
+    seriesList.forEach(function(s) {
+      var ds = {
+        type: 'line', label: s.label, data: s.data,
+        borderColor: s.color, borderWidth: s.dashed ? 1.5 : 2,
+        pointRadius: 0, pointHoverRadius: 3, tension: 0.3,
+        borderDash: s.dashed ? [4, 3] : [],
+      };
+      if (s.fill) {
+        ds.fill = true;
+        ds.backgroundColor = s.fillColor || (s.color.replace(')', ', 0.15)').replace('rgb(', 'rgba('));
+      }
+      datasets.push(ds);
+    });
+
+    var yConfig = { beginAtZero: true, grid: { color: '#1e2029' } };
+    if (opts.yMax) yConfig.max = opts.yMax;
+    if (opts.ySuffix) {
+      yConfig.ticks = { callback: function(v) { return v + opts.ySuffix; } };
+    }
+
+    return new Chart(ctx, {
+      data: { labels: labels, datasets: datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { position: 'top', labels: { usePointStyle: true, pointStyle: 'circle', padding: 16, font: { size: 11 } } },
+          tooltip: {
+            backgroundColor: '#1e2029', borderColor: '#2a2d3a', borderWidth: 1,
+            titleFont: { family: "'JetBrains Mono', monospace", size: 11 },
+            bodyFont: { size: 12 }, padding: 10,
+            callbacks: {
+              title: function(items) { return items.length ? formatDate(items[0].label) : ''; },
+              label: function(ctx) {
+                var sfx = opts.tooltipSuffix || '';
+                return ctx.dataset.label + ': ' + ctx.parsed.y.toLocaleString(undefined, {maximumFractionDigits: 1}) + sfx;
+              }
+            }
+          },
+        },
+        scales: {
+          x: { type: 'time', time: { unit: 'month', displayFormats: { month: 'MMM yyyy', quarter: 'MMM yyyy' } },
+               grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 14 } },
+          y: yConfig,
+        },
+      },
+    });
+  }
+
   // ── Render all charts ──
   function renderCharts() {
     // Destroy existing
@@ -230,6 +312,50 @@
     chartInstances.push(buildChart('chart-chats', f.dates, chatsValues, 'rgba(108,180,217,0.5)', 'Chats', chatsLines));
     chartInstances.push(buildChart('chart-avg-messages', f.dates, avgMsgsValues, 'rgba(92,184,112,0.5)', 'Avg Messages/Chat', avgMsgsLines));
     chartInstances.push(buildChart('chart-total-messages', f.dates, totalMsgsValues, 'rgba(224,138,122,0.5)', 'Messages', totalMsgsLines));
+
+    // ── Content charts ──
+    var csrc = getContentSource(currentGranularity);
+    if (csrc) {
+      var cDates = getContentDates(currentGranularity);
+      // Collect all content arrays for year filtering
+      var contentArrays = [
+        csrc.avg_user_words.values, csrc.avg_user_words.avg_28d,
+        csrc.avg_asst_words.values, csrc.avg_asst_words.avg_28d,
+        csrc.response_ratio.values, csrc.response_ratio.avg_28d,
+        csrc.code_pct_user.values, csrc.code_pct_user.avg_28d,
+        csrc.code_pct_asst.values, csrc.code_pct_asst.avg_28d,
+      ];
+
+      var cf = filterByYear(cDates, contentArrays, selectedYears);
+      var ci = 0;
+      var userWordsV = cf.arrays[ci++], userWords28 = cf.arrays[ci++];
+      var asstWordsV = cf.arrays[ci++], asstWords28 = cf.arrays[ci++];
+      var ratioV = cf.arrays[ci++], ratio28 = cf.arrays[ci++];
+      var codePctUserV = cf.arrays[ci++], codePctUser28 = cf.arrays[ci++];
+      var codePctAsstV = cf.arrays[ci++], codePctAsst28 = cf.arrays[ci++];
+
+      // Chart 4: Message Length
+      chartInstances.push(buildLineChart('chart-msg-length', cf.dates, [
+        { label: 'Your avg words', data: userWordsV, color: '#6cb4d9' },
+        { label: 'Your 28d avg', data: userWords28, color: '#6cb4d9', dashed: true },
+        { label: 'ChatGPT avg words', data: asstWordsV, color: '#e5a54b' },
+        { label: 'ChatGPT 28d avg', data: asstWords28, color: '#e5a54b', dashed: true },
+      ], { tooltipSuffix: ' words' }));
+
+      // Chart 5: Response Ratio
+      chartInstances.push(buildLineChart('chart-response-ratio', cf.dates, [
+        { label: 'Response ratio', data: ratioV, color: '#a07ce0', fill: true, fillColor: 'rgba(160,124,224,0.12)' },
+        { label: '28d avg', data: ratio28, color: '#a07ce0', dashed: true },
+      ], { tooltipSuffix: 'x' }));
+
+      // Chart 6: Code Block Usage
+      chartInstances.push(buildLineChart('chart-code-usage', cf.dates, [
+        { label: '% your msgs with code', data: codePctUserV, color: '#6cb4d9' },
+        { label: 'Your 28d avg', data: codePctUser28, color: '#6cb4d9', dashed: true },
+        { label: '% ChatGPT msgs with code', data: codePctAsstV, color: '#e08a7a' },
+        { label: 'ChatGPT 28d avg', data: codePctAsst28, color: '#e08a7a', dashed: true },
+      ], { tooltipSuffix: '%', yMax: 100 }));
+    }
   }
 
   // ── Single-select pills (granularity) ──

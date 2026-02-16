@@ -7,15 +7,28 @@ All notable changes to the ChatGPT Statistics project will be documented in this
 The ChatGPT Stats analytics system provides both CLI and web dashboard modes:
 - **CLI**: `chat_gpt_summary.py` processes `conversations.json` and generates CSV/JSON files to `chat_analytics/`
 - **Web Dashboard**: Multi-page FastAPI service (port 8203, systemd unit `chatgpt-stats`) with 3 pages:
-  - **Overview**: Summary cards, monthly usage chart, month-over-month comparison with pro-rata projections, conversation length histogram
-  - **Trends**: Daily/weekly/monthly time-series charts with multi-select year pills (toggle individual years or "All"), top days tables
-  - **Patterns**: 7x24 activity heatmap, hourly distribution, weekday vs weekend comparison, per-year activity overview table, gap analysis with multi-select year pills
+  - **Overview**: Summary cards (now including Avg Your Message, Avg ChatGPT Reply, Response Ratio, Code in Conversations), monthly usage chart, month-over-month comparison with pro-rata projections, conversation length histogram
+  - **Trends**: Daily/weekly/monthly time-series charts plus 3 new content charts (Message Length Over Time, Response Ratio Over Time, Code Block Usage Over Time) with multi-select year pills, top days tables
+  - **Patterns**: 7x24 activity heatmap, hourly distribution, weekday vs weekend comparison, per-year activity overview table, Code Analysis section with top 10 languages and code percentage, gap analysis with multi-select year pills
+- **Content Analytics**: New message analysis tracks word counts, character counts, code block detection, and detected programming languages for both user and assistant messages
 - **Pro-Rata Analytics**: Comparison cards compute elapsed/total days and project chat/message counts to full months/years for in-progress periods
-- **Analytics Engine**: 14 core computation functions covering summaries, trends, distributions, gaps, per-year breakdowns, and comparative analysis with pro-rata projections
-- **Test Coverage**: 58 unit tests validating data processing edge cases, template rendering, and API endpoints
-- **Infrastructure**: Nginx reverse proxy, 1-hour dashboard cache (thread-safe), ~100KB API payload with per-year bucketed rankings
+- **Analytics Engine**: 18 core computation functions covering summaries, trends, distributions, gaps, per-year breakdowns, content metrics, and code statistics with pro-rata projections
+- **Test Coverage**: 58+ unit tests validating data processing edge cases, template rendering, and API endpoints
+- **Infrastructure**: Nginx reverse proxy, 1-hour dashboard cache (thread-safe), ~100KB API payload with per-year bucketed rankings and content metrics
 
 ## Unreleased
+
+#### 2026-02-16: Message Content Analytics & Code Detection
+- **Added**: Content metrics tracking in `process_conversations()` — extracts word count, character count, code block presence, and detected programming languages from user and assistant messages for richer conversational analysis
+- **Added**: New daily analytics fields — user_words, user_chars, user_msgs, user_code_msgs, asst_words, asst_chars, asst_msgs, asst_code_msgs to enable content-based trends
+- **Added**: New conversation summary fields — user_words, asst_words, response_ratio (asst_words / user_words), and code_languages list for per-chat insights
+- **Added**: 4 new analytics functions in `analytics.py` — `compute_content_chart_data()`, `compute_content_weekly_data()`, `compute_content_monthly_data()`, `compute_code_stats()` — enabling rolling averages for message length and response balance
+- **Added**: Helper functions `_safe_div()`, `_content_metrics_from_records()`, `_wrap_with_rolling()` for DRY rolling average computation and safe division
+- **Added**: 4 new summary cards on Overview page — Avg Your Message (words), Avg ChatGPT Reply (words), Response Ratio (numeric), Code in Conversations (%)
+- **Added**: 3 new line charts on Trends page — Message Length Over Time (user vs assistant), Response Ratio Over Time, Code Block Usage Over Time — integrated with granularity and year pill system
+- **Added**: Code Analysis section on Patterns page with horizontal bar chart showing top 10 programming languages detected and percentage of conversations containing code blocks
+- **Updated**: `build_dashboard_payload()` with new keys — content_charts, content_weekly, content_monthly, code_stats, content_summary
+- **Updated**: Integration test to validate new payload structure
 
 #### 2026-02-16: Pro-Rata Projections & Multi-Select Year Filters
 - **Added**: Pro-rata projection logic to `compute_period_comparison()` — calculates elapsed_days, total_days, projected_chats, and projected_messages for incomplete periods (this_month, this_year) to estimate full-month/full-year activity

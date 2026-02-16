@@ -11,6 +11,7 @@ import csv
 import json
 import logging
 import os
+import re
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -39,6 +40,9 @@ def process_conversations(
         chat_message_count = 0
         chat_start_time = None
         chat_end_time = None
+        chat_user_words = 0
+        chat_asst_words = 0
+        chat_code_langs: set[str] = set()
 
         mapping = chat.get("mapping", {})
         if not isinstance(mapping, dict):
@@ -56,12 +60,28 @@ def process_conversations(
             author_role = author.get("role")
             create_time = message.get("create_time")
 
+            # Extract text from content parts (strings only)
+            text = ""
+            content = message.get("content")
+            if isinstance(content, dict):
+                parts = content.get("parts", [])
+                if isinstance(parts, list):
+                    text = " ".join(p for p in parts if isinstance(p, str))
+
+            word_count = len(text.split()) if text.strip() else 0
+            char_count = len(text)
+            has_code = bool(re.search(r"```", text))
+            if has_code:
+                code_langs = re.findall(r"```(\w+)", text)
+                chat_code_langs.update(code_langs)
+
             if author_role == "user" and create_time is not None:
                 try:
                     message_datetime = datetime.fromtimestamp(float(create_time))
                 except (TypeError, ValueError, OSError, OverflowError):
                     continue
                 chat_message_count += 1
+                chat_user_words += word_count
                 message_date = message_datetime.date()
 
                 all_message_timestamps.append(message_datetime)
@@ -76,13 +96,43 @@ def process_conversations(
                         "total_messages": 0,
                         "total_chats": 0,
                         "messages_per_chat": [],
+                        "user_words": 0,
+                        "user_chars": 0,
+                        "user_msgs": 0,
+                        "user_code_msgs": 0,
+                        "asst_words": 0,
+                        "asst_chars": 0,
+                        "asst_msgs": 0,
+                        "asst_code_msgs": 0,
                     }
                 daily_stats[message_date]["total_messages"] += 1
+                daily_stats[message_date]["user_words"] += word_count
+                daily_stats[message_date]["user_chars"] += char_count
+                daily_stats[message_date]["user_msgs"] += 1
+                if has_code:
+                    daily_stats[message_date]["user_code_msgs"] += 1
+
+            elif author_role == "assistant":
+                chat_asst_words += word_count
+                # Use user's chat_start_time date for assistant stats
+                if chat_start_time is not None:
+                    asst_date = chat_start_time.date()
+                    if asst_date in daily_stats:
+                        daily_stats[asst_date]["asst_words"] += word_count
+                        daily_stats[asst_date]["asst_chars"] += char_count
+                        daily_stats[asst_date]["asst_msgs"] += 1
+                        if has_code:
+                            daily_stats[asst_date]["asst_code_msgs"] += 1
 
         if chat_message_count > 0:
             chat_date = chat_start_time.date()
             chat_duration = (chat_end_time - chat_start_time).total_seconds() / 60
 
+            response_ratio = (
+                round(chat_asst_words / chat_user_words, 2)
+                if chat_user_words > 0
+                else 0.0
+            )
             chat_summaries.append(
                 {
                     "date": chat_date.isoformat(),
@@ -90,6 +140,10 @@ def process_conversations(
                     "end_time": chat_end_time.isoformat(),
                     "message_count": chat_message_count,
                     "duration_minutes": round(chat_duration, 2),
+                    "user_words": chat_user_words,
+                    "asst_words": chat_asst_words,
+                    "response_ratio": response_ratio,
+                    "code_languages": sorted(chat_code_langs),
                 }
             )
 
@@ -114,6 +168,14 @@ def process_conversations(
                 "total_chats": stats["total_chats"],
                 "avg_messages_per_chat": round(avg_mpc, 2),
                 "max_messages_in_chat": max(mpc) if mpc else 0,
+                "user_words": stats["user_words"],
+                "user_chars": stats["user_chars"],
+                "user_msgs": stats["user_msgs"],
+                "user_code_msgs": stats["user_code_msgs"],
+                "asst_words": stats["asst_words"],
+                "asst_chars": stats["asst_chars"],
+                "asst_msgs": stats["asst_msgs"],
+                "asst_code_msgs": stats["asst_code_msgs"],
             }
         )
 
@@ -437,6 +499,144 @@ def compute_hourly_data(timestamps: list[datetime]) -> dict[str, Any]:
     }
 
 
+def _safe_div(num: float, den: float, default: float = 0.0) -> float:
+    """Safe division returning *default* when denominator is zero."""
+    return round(num / den, 2) if den else default
+
+
+def _content_metrics_from_records(
+    sorted_records: list[dict],
+) -> dict[str, list[float]]:
+    """Extract per-period content metric lists from sorted daily/aggregated records."""
+    avg_user_words = [_safe_div(r["user_words"], r["user_msgs"]) for r in sorted_records]
+    avg_asst_words = [_safe_div(r["asst_words"], r["asst_msgs"]) for r in sorted_records]
+    response_ratio = [_safe_div(r["asst_words"], r["user_words"]) for r in sorted_records]
+    code_pct_user = [_safe_div(r["user_code_msgs"] * 100, r["user_msgs"]) for r in sorted_records]
+    code_pct_asst = [_safe_div(r["asst_code_msgs"] * 100, r["asst_msgs"]) for r in sorted_records]
+    return {
+        "avg_user_words": avg_user_words,
+        "avg_asst_words": avg_asst_words,
+        "response_ratio": response_ratio,
+        "code_pct_user": code_pct_user,
+        "code_pct_asst": code_pct_asst,
+    }
+
+
+def _wrap_with_rolling(values: list[float]) -> dict[str, list[float]]:
+    """Wrap a metric series with 7-day and 28-day rolling averages."""
+    return {
+        "values": values,
+        "avg_7d": [round(v, 2) for v in _rolling_avg(values, 7)],
+        "avg_28d": [round(v, 2) for v in _rolling_avg(values, 28)],
+    }
+
+
+def compute_content_chart_data(daily_records: list[dict]) -> dict[str, Any]:
+    """Compute daily content metrics (word counts, response ratio, code %) with rolling averages."""
+    sorted_records = sorted(daily_records, key=lambda r: r["date"])
+    dates = [r["date"] for r in sorted_records]
+    m = _content_metrics_from_records(sorted_records)
+    return {
+        "dates": dates,
+        "avg_user_words": _wrap_with_rolling(m["avg_user_words"]),
+        "avg_asst_words": _wrap_with_rolling(m["avg_asst_words"]),
+        "response_ratio": _wrap_with_rolling(m["response_ratio"]),
+        "code_pct_user": _wrap_with_rolling(m["code_pct_user"]),
+        "code_pct_asst": _wrap_with_rolling(m["code_pct_asst"]),
+    }
+
+
+def compute_content_weekly_data(daily_records: list[dict]) -> dict[str, Any]:
+    """Aggregate content metrics by ISO week."""
+    from datetime import date as date_type
+
+    sorted_records = sorted(daily_records, key=lambda r: r["date"])
+    weekly: dict[str, dict] = {}
+    for r in sorted_records:
+        d = date_type.fromisoformat(r["date"])
+        iso = d.isocalendar()
+        week_key = f"{iso[0]}-W{iso[1]:02d}"
+        monday = d - timedelta(days=d.weekday())
+        if week_key not in weekly:
+            weekly[week_key] = {
+                "monday": monday.isoformat(),
+                "user_words": 0, "user_chars": 0, "user_msgs": 0, "user_code_msgs": 0,
+                "asst_words": 0, "asst_chars": 0, "asst_msgs": 0, "asst_code_msgs": 0,
+            }
+        for field in ("user_words", "user_chars", "user_msgs", "user_code_msgs",
+                       "asst_words", "asst_chars", "asst_msgs", "asst_code_msgs"):
+            weekly[week_key][field] += r[field]
+
+    sorted_keys = sorted(weekly.keys())
+    weeks = [weekly[k]["monday"] for k in sorted_keys]
+    agg_records = [weekly[k] for k in sorted_keys]
+    m = _content_metrics_from_records(agg_records)
+
+    return {
+        "weeks": weeks,
+        "avg_user_words": _wrap_with_rolling(m["avg_user_words"]),
+        "avg_asst_words": _wrap_with_rolling(m["avg_asst_words"]),
+        "response_ratio": _wrap_with_rolling(m["response_ratio"]),
+        "code_pct_user": _wrap_with_rolling(m["code_pct_user"]),
+        "code_pct_asst": _wrap_with_rolling(m["code_pct_asst"]),
+    }
+
+
+def compute_content_monthly_data(daily_records: list[dict]) -> dict[str, Any]:
+    """Aggregate content metrics by calendar month."""
+    sorted_records = sorted(daily_records, key=lambda r: r["date"])
+    monthly: dict[str, dict] = {}
+    for r in sorted_records:
+        month = r["date"][:7]
+        if month not in monthly:
+            monthly[month] = {
+                "user_words": 0, "user_chars": 0, "user_msgs": 0, "user_code_msgs": 0,
+                "asst_words": 0, "asst_chars": 0, "asst_msgs": 0, "asst_code_msgs": 0,
+            }
+        for field in ("user_words", "user_chars", "user_msgs", "user_code_msgs",
+                       "asst_words", "asst_chars", "asst_msgs", "asst_code_msgs"):
+            monthly[month][field] += r[field]
+
+    months = sorted(monthly.keys())
+    agg_records = [monthly[m] for m in months]
+    m = _content_metrics_from_records(agg_records)
+
+    return {
+        "months": months,
+        "avg_user_words": _wrap_with_rolling(m["avg_user_words"]),
+        "avg_asst_words": _wrap_with_rolling(m["avg_asst_words"]),
+        "response_ratio": _wrap_with_rolling(m["response_ratio"]),
+        "code_pct_user": _wrap_with_rolling(m["code_pct_user"]),
+        "code_pct_asst": _wrap_with_rolling(m["code_pct_asst"]),
+    }
+
+
+def compute_code_stats(chat_summaries: list[dict]) -> dict[str, Any]:
+    """Compute code language breakdown from chat summaries."""
+    lang_counter: dict[str, int] = {}
+    convos_with_code = 0
+    for s in chat_summaries:
+        langs = s.get("code_languages", [])
+        if langs:
+            convos_with_code += 1
+            for lang in langs:
+                lang_counter[lang] = lang_counter.get(lang, 0) + 1
+
+    total = len(chat_summaries)
+    pct_with_code = round(convos_with_code / total * 100, 1) if total else 0.0
+    language_counts = sorted(
+        [{"language": lang, "count": cnt} for lang, cnt in lang_counter.items()],
+        key=lambda x: x["count"],
+        reverse=True,
+    )
+
+    return {
+        "total_conversations_with_code": convos_with_code,
+        "pct_with_code": pct_with_code,
+        "language_counts": language_counts,
+    }
+
+
 _LENGTH_BUCKETS = [
     ("1-2", 1, 2),
     ("3-5", 3, 5),
@@ -585,6 +785,18 @@ def build_dashboard_payload(path: str = "conversations.json") -> dict[str, Any]:
     gap_data = compute_gap_analysis(timestamps)
     stats = compute_summary_stats(summaries, records)
     charts = compute_chart_data(records)
+    code_stats = compute_code_stats(summaries)
+
+    # Compute content summary from summaries
+    total_user_words = sum(s.get("user_words", 0) for s in summaries)
+    total_asst_words = sum(s.get("asst_words", 0) for s in summaries)
+    total_summaries = len(summaries)
+    content_summary = {
+        "avg_user_words": round(total_user_words / total_summaries, 1) if total_summaries else 0,
+        "avg_asst_words": round(total_asst_words / total_summaries, 1) if total_summaries else 0,
+        "avg_response_ratio": round(total_asst_words / total_user_words, 2) if total_user_words else 0,
+        "pct_conversations_with_code": code_stats["pct_with_code"],
+    }
 
     return {
         "generated_at": datetime.now().isoformat(),
@@ -604,6 +816,11 @@ def build_dashboard_payload(path: str = "conversations.json") -> dict[str, Any]:
         "length_distribution": compute_length_distribution(summaries),
         "comparison": compute_period_comparison(records),
         "activity_by_year": compute_activity_by_year(timestamps),
+        "content_charts": compute_content_chart_data(records),
+        "content_weekly": compute_content_weekly_data(records),
+        "content_monthly": compute_content_monthly_data(records),
+        "code_stats": code_stats,
+        "content_summary": content_summary,
     }
 
 

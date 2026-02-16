@@ -68,6 +68,15 @@
     { label: 'Longest Gap', value: longestGap },
   ];
 
+  // Content analytics cards
+  var cs = D.content_summary || {};
+  if (cs.avg_user_words != null) {
+    cardsData.push({ label: 'Avg Your Message', value: cs.avg_user_words.toLocaleString() + ' words' });
+    cardsData.push({ label: 'Avg ChatGPT Reply', value: cs.avg_asst_words.toLocaleString() + ' words' });
+    cardsData.push({ label: 'Response Ratio', value: cs.avg_response_ratio + 'x', sub: 'ChatGPT words per your word' });
+    cardsData.push({ label: 'Code in Conversations', value: cs.pct_conversations_with_code + '%' });
+  }
+
   var cardsEl = document.getElementById('cards');
   cardsData.forEach(function(c) {
     var valCls = 'value';

@@ -100,24 +100,29 @@
       return { text: '0%', cls: 'neutral' };
     }
 
-    function buildComparisonCard(title, current, previous, currentLabel, previousLabel) {
+    function buildComparisonCard(title, current, previous, subtitle) {
       var card = el('div', { className: 'comparison-card' });
       card.appendChild(txt('h3', title));
+      if (subtitle) card.appendChild(txt('div', subtitle, 'comparison-subtitle'));
 
       var metrics = [
-        { label: 'Chats', cur: current.chats, prev: previous.chats },
-        { label: 'Messages', cur: current.messages, prev: previous.messages },
+        { label: 'Chats', cur: current.chats, prev: previous.chats, proj: current.projected_chats },
+        { label: 'Messages', cur: current.messages, prev: previous.messages, proj: current.projected_messages },
         { label: 'Avg msgs/chat', cur: current.avg_messages, prev: previous.avg_messages },
       ];
 
       metrics.forEach(function(m) {
-        var change = pctChange(m.cur, m.prev);
+        var compareVal = m.proj != null ? m.proj : m.cur;
+        var change = pctChange(compareVal, m.prev);
         var row = el('div', { className: 'comparison-row' });
         row.appendChild(txt('span', m.label, 'comparison-label'));
         var vals = el('div', { className: 'comparison-values' });
         vals.appendChild(txt('span', m.prev.toLocaleString(), 'comparison-old'));
         vals.appendChild(txt('span', '\u2192'));
         vals.appendChild(txt('span', m.cur.toLocaleString(), 'comparison-new'));
+        if (m.proj != null) {
+          vals.appendChild(txt('span', '(\u2248' + Math.round(m.proj).toLocaleString() + ')', 'comparison-proj'));
+        }
         vals.appendChild(txt('span', change.text, 'comparison-change ' + change.cls));
         row.appendChild(vals);
         card.appendChild(row);
@@ -126,11 +131,14 @@
       return card;
     }
 
+    var tmSub = comp.this_month.elapsed_days + ' of ' + comp.this_month.total_days + ' days';
+    var tySub = comp.this_year.elapsed_days + ' of ' + comp.this_year.total_days + ' days';
+
     grid.appendChild(buildComparisonCard(
-      'This Month vs Last Month', comp.this_month, comp.last_month, 'This month', 'Last month'
+      'This Month vs Last Month', comp.this_month, comp.last_month, tmSub
     ));
     grid.appendChild(buildComparisonCard(
-      'This Year vs Last Year', comp.this_year, comp.last_year, 'This year', 'Last year'
+      'This Year vs Last Year', comp.this_year, comp.last_year, tySub
     ));
   }
 

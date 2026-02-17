@@ -75,3 +75,7 @@ No pandas or matplotlib — rolling averages computed in pure Python.
 - `conversations.json` can be 100MB+; first dashboard load takes ~15s to parse (then cached for 1hr)
 - `chat_gpt_export.py` uses interactive menus — must be run in a terminal
 - Export date range depends on when the user requested it from OpenAI
+
+## UI Design System
+
+Uses the **cool-blue analysis** design system (aspirational — future UI work should follow this). When building or modifying UI for this project, read `~/.claude/skills/fastapi-ui-analysis-or-functional-apps.md` for the complete design specification (colours, fonts, components, Chart.js theming).

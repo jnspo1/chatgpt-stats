@@ -78,4 +78,4 @@ No pandas or matplotlib — rolling averages computed in pure Python.
 
 ## UI Design System
 
-Uses the **cool-blue analysis** design system (aspirational — future UI work should follow this). When building or modifying UI for this project, read `~/.claude/skills/fastapi-ui-analysis-or-functional-apps.md` for the complete design specification (colours, fonts, components, Chart.js theming).
+Theme: **blue** (`<html data-theme="blue">`). Shared CSS: `/shared/pi-design.css`. Skill: `~/.claude/skills/fastapi-ui-design-system.md`.

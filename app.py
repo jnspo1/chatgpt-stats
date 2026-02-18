@@ -14,9 +14,10 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse
-from fastapi.templating import Jinja2Templates
+from fastapi.responses import HTMLResponse
 from starlette.requests import Request
+
+from pi_shared.fastapi import make_standard_router, setup_templates
 
 from analytics import build_dashboard_payload
 
@@ -25,13 +26,13 @@ logger = logging.getLogger(__name__)
 CONVERSATIONS_PATH = Path(__file__).parent / "conversations.json"
 CACHE_TTL_SECONDS = 3600  # 1 hour
 
-app = FastAPI(
-    title="ChatGPT Statistics Dashboard",
-    root_path="/chatgpt_stats",
-)
+app = FastAPI(title="ChatGPT Statistics Dashboard")
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
-templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+templates = setup_templates(TEMPLATES_DIR, "/chatgpt_stats")
+
+ICON_PATH = Path(__file__).parent / "static" / "app_icon.jpg"
+app.include_router(make_standard_router(ICON_PATH))
 
 _cache_lock = threading.Lock()
 _cache: dict[str, Any] = {
@@ -78,22 +79,6 @@ def _get_cached_data(force_refresh: bool = False) -> dict[str, Any]:
         return data
 
 
-@app.get("/health")
-@app.get("/healthz")
-def healthz():
-    return {"status": "ok"}
-
-
-@app.get("/app_icon.jpg")
-async def app_icon():
-    """Serve the app icon for iPhone Home Screen."""
-    return FileResponse(
-        Path(__file__).parent / "static" / "app_icon.jpg",
-        media_type="image/jpeg",
-        headers={"Cache-Control": "no-cache"},
-    )
-
-
 @app.get("/", response_class=HTMLResponse)
 def overview(request: Request):
     """Serve the overview dashboard page."""
@@ -103,7 +88,6 @@ def overview(request: Request):
         "overview.html",
         {"request": request, "data_json": data_json, "page": "overview"},
     )
-
 
 
 @app.get("/trends", response_class=HTMLResponse)

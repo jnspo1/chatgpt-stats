@@ -18,6 +18,13 @@ The ChatGPT Stats analytics system provides both CLI and web dashboard modes:
 
 ## Unreleased
 
+#### 2026-02-19: pi_shared Integration & Static File Fix
+- **Refactored**: Removed `root_path="/chatgpt_stats"` from FastAPI constructor (fixes Starlette 0.50+ silent 404s on static files when served through nginx with prefix stripping)
+- **Changed**: Replaced manual `/healthz`, `/health`, and `/app_icon.jpg` route handlers with `make_standard_router()` from pi_shared for consistent health check endpoints across Pi services
+- **Changed**: Replaced `Jinja2Templates` initialization with `setup_templates()` from pi_shared which automatically injects `path_prefix` as a global template variable for correct URL generation behind nginx
+- **Updated**: `templates/base.html` — converted hardcoded `/chatgpt_stats/app_icon.jpg` to `{{ path_prefix }}/app_icon.jpg` and nav links from `url_for()` calls to `{{ path_prefix }}/` references (since `url_for()` relied on removed `root_path` parameter)
+- **Removed**: Unused imports from `app.py` (`FileResponse`, `Jinja2Templates`) and manual health endpoint implementation
+
 #### 2026-02-16: Message Content Analytics & Code Detection
 - **Added**: Content metrics tracking in `process_conversations()` — extracts word count, character count, code block presence, and detected programming languages from user and assistant messages for richer conversational analysis
 - **Added**: New daily analytics fields — user_words, user_chars, user_msgs, user_code_msgs, asst_words, asst_chars, asst_msgs, asst_code_msgs to enable content-based trends

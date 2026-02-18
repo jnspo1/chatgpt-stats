@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <!-- iPhone Home Screen icon -->
-<link rel="apple-touch-icon" sizes="180x180" href="/chatgpt_stats/app_icon.jpg?v=20260216">
+<link rel="apple-touch-icon" sizes="180x180" href="{{ path_prefix }}/app_icon.jpg?v=20260216">
 
 <!-- Home Screen label -->
 <meta name="apple-mobile-web-app-title" content="ChatGPT Stats">
@@ -271,9 +271,9 @@ const DASHBOARD_DATA = {{ data_json | safe }};
 </header>
 
 <nav class="nav">
-  <a href="{{ url_for('overview') }}" {% if page == 'overview' %}class="active"{% endif %}>Overview</a>
-  <a href="{{ url_for('trends') }}" {% if page == 'trends' %}class="active"{% endif %}>Trends</a>
-  <a href="{{ url_for('patterns') }}" {% if page == 'patterns' %}class="active"{% endif %}>Patterns</a>
+  <a href="{{ path_prefix }}/" {% if page == 'overview' %}class="active"{% endif %}>Overview</a>
+  <a href="{{ path_prefix }}/trends" {% if page == 'trends' %}class="active"{% endif %}>Trends</a>
+  <a href="{{ path_prefix }}/patterns" {% if page == 'patterns' %}class="active"{% endif %}>Patterns</a>
 </nav>
 
 <main class="content">

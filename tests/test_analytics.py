@@ -7,7 +7,10 @@ from io import StringIO
 import pytest
 
 from analytics import (
+    _build_daily_records,
     _expanding_avg,
+    _extract_message_content,
+    _init_daily_bucket,
     _rolling_avg,
     build_dashboard_payload,
     compute_activity_by_year,
@@ -23,39 +26,8 @@ from analytics import (
     process_conversations,
     save_analytics_files,
 )
-
-
-def _make_conversation(user_messages):
-    """Build a minimal conversation dict from a list of (unix_epoch, text) tuples."""
-    mapping = {}
-    for i, (ts, text) in enumerate(user_messages):
-        mapping[f"msg-{i}"] = {
-            "message": {
-                "author": {"role": "user"},
-                "create_time": ts,
-                "content": {"parts": [text]},
-            }
-        }
-    # Add a system node with no message (common in real data)
-    mapping["system-node"] = {"message": None}
-    return {"mapping": mapping}
-
-
-def _make_conversations_with_days(day_configs):
-    """Build conversations spanning multiple days.
-
-    day_configs: list of (date_str, num_chats, msgs_per_chat) tuples.
-    """
-    convos = []
-    for date_str, num_chats, msgs_per_chat in day_configs:
-        base = datetime.fromisoformat(date_str + "T10:00:00")
-        for c in range(num_chats):
-            msgs = []
-            for m in range(msgs_per_chat):
-                ts = base.timestamp() + c * 3600 + m * 60
-                msgs.append((ts, f"msg-{c}-{m}"))
-            convos.append(_make_conversation(msgs))
-    return convos
+from tests.helpers import make_conversation as _make_conversation
+from tests.helpers import make_conversations_with_days as _make_conversations_with_days
 
 
 # ── TestProcessConversations ────────────────
@@ -767,3 +739,126 @@ class TestBuildDashboardPayload:
         assert payload["content_summary"]["avg_user_words"] >= 0
         assert payload["content_summary"]["avg_response_ratio"] >= 0
         assert isinstance(payload["code_stats"]["language_counts"], list)
+
+
+# ── TestExtractedHelpers (from 2.8 refactor) ──
+
+
+class TestExtractMessageContent:
+    """Tests for _extract_message_content helper."""
+
+    def test_plain_text(self):
+        message = {"content": {"parts": ["Hello world, how are you?"]}}
+        text, words, chars, has_code, langs = _extract_message_content(message)
+        assert text == "Hello world, how are you?"
+        assert words == 5
+        assert chars == len("Hello world, how are you?")
+        assert has_code is False
+        assert langs == []
+
+    def test_code_block(self):
+        message = {"content": {"parts": ["Here is code:\n```python\nprint('hi')\n```"]}}
+        text, words, chars, has_code, langs = _extract_message_content(message)
+        assert has_code is True
+        assert "python" in langs
+
+    def test_multiple_code_languages(self):
+        message = {"content": {"parts": ["```javascript\nfoo()\n```\n```python\nbar()\n```"]}}
+        _, _, _, has_code, langs = _extract_message_content(message)
+        assert has_code is True
+        assert set(langs) == {"javascript", "python"}
+
+    def test_empty_content(self):
+        message = {"content": {"parts": []}}
+        text, words, chars, has_code, langs = _extract_message_content(message)
+        assert text == ""
+        assert words == 0
+        assert has_code is False
+
+    def test_no_content_key(self):
+        message = {}
+        text, words, chars, has_code, langs = _extract_message_content(message)
+        assert text == ""
+        assert words == 0
+
+    def test_non_string_parts_filtered(self):
+        message = {"content": {"parts": ["hello", 42, "world"]}}
+        text, words, _, _, _ = _extract_message_content(message)
+        assert text == "hello world"
+        assert words == 2
+
+    def test_whitespace_only(self):
+        message = {"content": {"parts": ["   "]}}
+        _, words, _, _, _ = _extract_message_content(message)
+        assert words == 0
+
+
+class TestInitDailyBucket:
+    """Tests for _init_daily_bucket helper."""
+
+    def test_all_keys_present(self):
+        bucket = _init_daily_bucket()
+        expected_keys = {
+            "total_messages", "total_chats", "messages_per_chat",
+            "user_words", "user_chars", "user_msgs", "user_code_msgs",
+            "asst_words", "asst_chars", "asst_msgs", "asst_code_msgs",
+        }
+        assert set(bucket.keys()) == expected_keys
+
+    def test_all_counters_zero(self):
+        bucket = _init_daily_bucket()
+        for k, v in bucket.items():
+            if k == "messages_per_chat":
+                assert v == []
+            else:
+                assert v == 0
+
+    def test_returns_independent_copies(self):
+        b1 = _init_daily_bucket()
+        b2 = _init_daily_bucket()
+        b1["total_messages"] = 99
+        assert b2["total_messages"] == 0
+
+
+class TestBuildDailyRecords:
+    """Tests for _build_daily_records helper."""
+
+    def test_empty_input(self):
+        assert _build_daily_records({}) == []
+
+    def test_single_day(self):
+        from datetime import date
+        stats = {
+            date(2024, 1, 15): {
+                "total_messages": 10,
+                "total_chats": 2,
+                "messages_per_chat": [5, 5],
+                "user_words": 100,
+                "user_chars": 500,
+                "user_msgs": 6,
+                "user_code_msgs": 1,
+                "asst_words": 200,
+                "asst_chars": 1000,
+                "asst_msgs": 4,
+                "asst_code_msgs": 2,
+            }
+        }
+        records = _build_daily_records(stats)
+        assert len(records) == 1
+        r = records[0]
+        assert r["date"] == "2024-01-15"
+        assert r["total_messages"] == 10
+        assert r["total_chats"] == 2
+        assert r["avg_messages_per_chat"] == 5.0
+        assert r["max_messages_in_chat"] == 5
+
+    def test_empty_messages_per_chat(self):
+        from datetime import date
+        stats = {
+            date(2024, 1, 15): {
+                **_init_daily_bucket(),
+            }
+        }
+        records = _build_daily_records(stats)
+        assert records[0]["avg_messages_per_chat"] == 0
+        assert records[0]["max_messages_in_chat"] == 0

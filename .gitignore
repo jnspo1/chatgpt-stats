@@ -36,6 +36,10 @@ ENV/
 .Trashes
 Thumbs.db
 
+# Environment and databases
+.env
+*.db
+
 # Test cache
 .pytest_cache/
 

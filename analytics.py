@@ -19,9 +19,99 @@ logger = logging.getLogger(__name__)
 
 
 def load_conversations(path: str = "conversations.json") -> list[dict]:
-    """Load conversations from an OpenAI export JSON file."""
+    """Load conversations from an OpenAI export JSON file.
+
+    Args:
+        path: Filesystem path to the OpenAI conversations.json export.
+            Defaults to "conversations.json" in the current directory.
+
+    Returns:
+        List of raw conversation dicts as exported by OpenAI.  Each dict
+        contains a "mapping" key with the message tree.
+
+    Raises:
+        FileNotFoundError: If the file at *path* does not exist.
+        json.JSONDecodeError: If the file contains invalid JSON.
+    """
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def _extract_message_content(message: dict) -> tuple[str, int, int, bool, list[str]]:
+    """Extract text content and metrics from a single message.
+
+    Args:
+        message: A message dict containing a 'content' key with 'parts'.
+
+    Returns:
+        A tuple of (text, word_count, char_count, has_code, code_languages).
+    """
+    text = ""
+    content = message.get("content")
+    if isinstance(content, dict):
+        parts = content.get("parts", [])
+        if isinstance(parts, list):
+            text = " ".join(p for p in parts if isinstance(p, str))
+
+    word_count = len(text.split()) if text.strip() else 0
+    char_count = len(text)
+    has_code = bool(re.search(r"```", text))
+    code_languages = re.findall(r"```(\w+)", text) if has_code else []
+    return text, word_count, char_count, has_code, code_languages
+
+
+def _init_daily_bucket() -> dict:
+    """Create a fresh daily stats accumulator dict.
+
+    Returns:
+        Dict with zeroed counters for messages, words, chars, and code.
+    """
+    return {
+        "total_messages": 0,
+        "total_chats": 0,
+        "messages_per_chat": [],
+        "user_words": 0,
+        "user_chars": 0,
+        "user_msgs": 0,
+        "user_code_msgs": 0,
+        "asst_words": 0,
+        "asst_chars": 0,
+        "asst_msgs": 0,
+        "asst_code_msgs": 0,
+    }
+
+
+def _build_daily_records(daily_stats: dict) -> list[dict]:
+    """Convert accumulated daily stats into final daily record dicts.
+
+    Args:
+        daily_stats: Dict mapping date objects to accumulator dicts.
+
+    Returns:
+        List of per-day record dicts with computed averages and maximums.
+    """
+    daily_records = []
+    for date, stats in daily_stats.items():
+        mpc = stats["messages_per_chat"]
+        avg_mpc = sum(mpc) / len(mpc) if mpc else 0
+        daily_records.append(
+            {
+                "date": date.isoformat(),
+                "total_messages": stats["total_messages"],
+                "total_chats": stats["total_chats"],
+                "avg_messages_per_chat": round(avg_mpc, 2),
+                "max_messages_in_chat": max(mpc) if mpc else 0,
+                "user_words": stats["user_words"],
+                "user_chars": stats["user_chars"],
+                "user_msgs": stats["user_msgs"],
+                "user_code_msgs": stats["user_code_msgs"],
+                "asst_words": stats["asst_words"],
+                "asst_chars": stats["asst_chars"],
+                "asst_msgs": stats["asst_msgs"],
+                "asst_code_msgs": stats["asst_code_msgs"],
+            }
+        )
+    return daily_records
 
 
 def process_conversations(
@@ -29,8 +119,25 @@ def process_conversations(
 ) -> tuple[list[dict], list[dict], list[datetime]]:
     """Parse raw conversations into chat summaries, daily records, and timestamps.
 
+    Iterates through every conversation's message mapping, extracting user
+    messages and assistant replies.  Produces per-chat summaries (date, message
+    count, duration, word counts, code languages) and per-day aggregates
+    (total messages, chats, content metrics).
+
+    Args:
+        conversations: List of raw conversation dicts from ``load_conversations``.
+            Each dict must contain a "mapping" key whose values hold messages.
+
     Returns:
-        (chat_summaries, daily_records, all_message_timestamps)
+        A 3-tuple of (chat_summaries, daily_records, all_message_timestamps):
+            - chat_summaries: list of per-conversation summary dicts with keys
+              date, start_time, end_time, message_count, duration_minutes,
+              user_words, asst_words, response_ratio, code_languages.
+            - daily_records: list of per-day aggregate dicts with keys date,
+              total_messages, total_chats, avg_messages_per_chat,
+              max_messages_in_chat, plus content metric fields.
+            - all_message_timestamps: flat list of datetime objects for every
+              user message, useful for downstream gap and hourly analysis.
     """
     chat_summaries: list[dict] = []
     daily_stats: dict = {}
@@ -59,21 +166,8 @@ def process_conversations(
 
             author_role = author.get("role")
             create_time = message.get("create_time")
-
-            # Extract text from content parts (strings only)
-            text = ""
-            content = message.get("content")
-            if isinstance(content, dict):
-                parts = content.get("parts", [])
-                if isinstance(parts, list):
-                    text = " ".join(p for p in parts if isinstance(p, str))
-
-            word_count = len(text.split()) if text.strip() else 0
-            char_count = len(text)
-            has_code = bool(re.search(r"```", text))
-            if has_code:
-                code_langs = re.findall(r"```(\w+)", text)
-                chat_code_langs.update(code_langs)
+            _, word_count, char_count, has_code, code_langs = _extract_message_content(message)
+            chat_code_langs.update(code_langs)
 
             if author_role == "user" and create_time is not None:
                 try:
@@ -92,19 +186,7 @@ def process_conversations(
                     chat_end_time = message_datetime
 
                 if message_date not in daily_stats:
-                    daily_stats[message_date] = {
-                        "total_messages": 0,
-                        "total_chats": 0,
-                        "messages_per_chat": [],
-                        "user_words": 0,
-                        "user_chars": 0,
-                        "user_msgs": 0,
-                        "user_code_msgs": 0,
-                        "asst_words": 0,
-                        "asst_chars": 0,
-                        "asst_msgs": 0,
-                        "asst_code_msgs": 0,
-                    }
+                    daily_stats[message_date] = _init_daily_bucket()
                 daily_stats[message_date]["total_messages"] += 1
                 daily_stats[message_date]["user_words"] += word_count
                 daily_stats[message_date]["user_chars"] += char_count
@@ -157,29 +239,7 @@ def process_conversations(
             len(conversations),
         )
 
-    daily_records = []
-    for date, stats in daily_stats.items():
-        mpc = stats["messages_per_chat"]
-        avg_mpc = sum(mpc) / len(mpc) if mpc else 0
-        daily_records.append(
-            {
-                "date": date.isoformat(),
-                "total_messages": stats["total_messages"],
-                "total_chats": stats["total_chats"],
-                "avg_messages_per_chat": round(avg_mpc, 2),
-                "max_messages_in_chat": max(mpc) if mpc else 0,
-                "user_words": stats["user_words"],
-                "user_chars": stats["user_chars"],
-                "user_msgs": stats["user_msgs"],
-                "user_code_msgs": stats["user_code_msgs"],
-                "asst_words": stats["asst_words"],
-                "asst_chars": stats["asst_chars"],
-                "asst_msgs": stats["asst_msgs"],
-                "asst_code_msgs": stats["asst_code_msgs"],
-            }
-        )
-
-    return chat_summaries, daily_records, all_message_timestamps
+    return chat_summaries, _build_daily_records(daily_stats), all_message_timestamps
 
 
 def compute_gap_analysis(
@@ -187,8 +247,24 @@ def compute_gap_analysis(
 ) -> dict[str, Any]:
     """Compute gap analysis from message timestamps (sorted internally).
 
-    Returns dict with keys: gaps, total_days, days_active, days_inactive,
-    proportion_inactive, longest_gap.
+    Sorts timestamps, calculates every consecutive gap between messages,
+    and derives activity/inactivity metrics across the full date range.
+
+    Args:
+        timestamps: List of datetime objects representing user message times.
+            Need not be pre-sorted; the function sorts a copy internally.
+
+    Returns:
+        Dict with keys:
+            - gaps: list of gap dicts (start_timestamp, end_timestamp,
+              length_days), sorted longest-first.
+            - total_days: int, calendar days from first to last message
+              (inclusive).
+            - days_active: int, distinct calendar dates with at least one
+              message.
+            - days_inactive: int, calendar dates with no messages.
+            - proportion_inactive: float, percentage of inactive days (0-100).
+            - longest_gap: the single longest gap dict, or None if no gaps.
     """
     if not timestamps:
         return {
@@ -244,8 +320,19 @@ def compute_gap_analysis(
 def compute_activity_by_year(timestamps: list[datetime]) -> list[dict]:
     """Compute per-year activity breakdown from message timestamps.
 
-    Returns list of dicts with Overall row first, then ascending years.
-    First/last years use actual message date boundaries; middle years use full calendar year.
+    Splits timestamps by calendar year and computes active/inactive day
+    counts for each year.  First/last years use actual message date
+    boundaries; middle years use full calendar year (Jan 1 -- Dec 31).
+
+    Args:
+        timestamps: List of datetime objects representing user message times.
+            Need not be pre-sorted.
+
+    Returns:
+        List of dicts with the Overall row first, then ascending years.
+        Each dict has keys: year (str), total_days, days_active,
+        days_inactive, pct_active, pct_inactive.  Returns an empty list
+        when *timestamps* is empty.
     """
     if not timestamps:
         return []
@@ -313,8 +400,20 @@ def compute_summary_stats(
 ) -> dict[str, Any]:
     """Compute high-level summary statistics.
 
-    Returns dict with keys: total_messages, total_chats, first_date, last_date,
-    years_span, top_days_by_chats, top_days_by_messages.
+    Derives totals, date range, and top-day rankings from the per-chat
+    summaries and per-day records produced by ``process_conversations``.
+
+    Args:
+        summaries: List of per-conversation summary dicts (from
+            ``process_conversations``).  Each must contain "start_time".
+        records: List of per-day aggregate dicts (from
+            ``process_conversations``).  Each must contain "total_messages"
+            and "total_chats".
+
+    Returns:
+        Dict with keys: total_messages, total_chats, first_date (str or
+        None), last_date (str or None), years_span (float), top_days_by_chats
+        (list of record dicts), top_days_by_messages (list of record dicts).
     """
     total_messages = sum(r["total_messages"] for r in records)
     total_chats = len(summaries)
@@ -348,7 +447,18 @@ def compute_summary_stats(
 # ---------------------------------------------------------------------------
 
 def _rolling_avg(values: list[float], window: int) -> list[float]:
-    """Compute rolling average, using available values when the window is not yet full."""
+    """Compute rolling average, using available values when the window is not yet full.
+
+    Args:
+        values: Numeric series to smooth.
+        window: Maximum number of trailing values to average.  At the
+            start of the series, fewer values are used (expanding window
+            until *window* values are available).
+
+    Returns:
+        List of floats the same length as *values*, where each element
+        is the mean of the trailing *window* (or fewer) values.
+    """
     result = []
     for i in range(len(values)):
         start = max(0, i - window + 1)
@@ -358,7 +468,15 @@ def _rolling_avg(values: list[float], window: int) -> list[float]:
 
 
 def _expanding_avg(values: list[float]) -> list[float]:
-    """Compute expanding (lifetime) average."""
+    """Compute expanding (lifetime) average.
+
+    Args:
+        values: Numeric series to compute a running average over.
+
+    Returns:
+        List of floats the same length as *values*, where element *i* is
+        the mean of values[0] through values[i] (inclusive).
+    """
     result: list[float] = []
     s = 0.0
     for i, v in enumerate(values, 1):
@@ -370,8 +488,18 @@ def _expanding_avg(values: list[float]) -> list[float]:
 def compute_chart_data(daily_records: list[dict]) -> dict[str, Any]:
     """Compute chart series from daily records for Chart.js rendering.
 
-    Returns dict with keys: dates, and for each metric (chats, avg_messages,
-    total_messages): values, avg_7d, avg_28d, avg_lifetime.
+    Sorts records by date and produces raw values plus 7-day, 28-day, and
+    lifetime rolling averages for each metric.
+
+    Args:
+        daily_records: List of per-day aggregate dicts (from
+            ``process_conversations``).  Each must contain "date",
+            "total_chats", "avg_messages_per_chat", and "total_messages".
+
+    Returns:
+        Dict with keys: dates (list of ISO date strings), and for each
+        metric (chats, avg_messages, total_messages) a sub-dict with
+        keys: values, avg_7d, avg_28d, avg_lifetime.
     """
     sorted_records = sorted(daily_records, key=lambda r: r["date"])
 
@@ -404,7 +532,18 @@ def compute_chart_data(daily_records: list[dict]) -> dict[str, Any]:
 
 
 def compute_monthly_data(daily_records: list[dict]) -> dict[str, Any]:
-    """Aggregate daily records into monthly buckets for the overview chart."""
+    """Aggregate daily records into monthly buckets for the overview chart.
+
+    Args:
+        daily_records: List of per-day aggregate dicts.  Each must contain
+            "date" (ISO string), "total_chats", and "total_messages".
+
+    Returns:
+        Dict with keys: months (list of "YYYY-MM" strings), chats (list of
+        int), messages (list of int), avg_messages (list of float),
+        chats_avg_3m (3-month rolling average of chats), messages_avg_3m
+        (3-month rolling average of messages).
+    """
     sorted_records = sorted(daily_records, key=lambda r: r["date"])
 
     monthly: dict[str, dict] = {}
@@ -437,7 +576,18 @@ def compute_monthly_data(daily_records: list[dict]) -> dict[str, Any]:
 
 
 def compute_weekly_data(daily_records: list[dict]) -> dict[str, Any]:
-    """Aggregate daily records into ISO-week buckets for the trends page."""
+    """Aggregate daily records into ISO-week buckets for the trends page.
+
+    Args:
+        daily_records: List of per-day aggregate dicts.  Each must contain
+            "date" (ISO string), "total_chats", and "total_messages".
+
+    Returns:
+        Dict with keys: weeks (list of Monday ISO date strings), chats,
+        messages, avg_messages (per-week values), plus rolling averages
+        chats_avg_4w, chats_avg_12w, messages_avg_4w, messages_avg_12w,
+        avg_messages_avg_4w, avg_messages_avg_12w.
+    """
     from datetime import date as date_type
 
     sorted_records = sorted(daily_records, key=lambda r: r["date"])
@@ -480,7 +630,18 @@ def compute_weekly_data(daily_records: list[dict]) -> dict[str, Any]:
 
 
 def compute_hourly_data(timestamps: list[datetime]) -> dict[str, Any]:
-    """Compute hour-of-day x day-of-week activity grid from timestamps."""
+    """Compute hour-of-day x day-of-week activity grid from timestamps.
+
+    Args:
+        timestamps: List of datetime objects for user messages.
+
+    Returns:
+        Dict with keys:
+            - heatmap: 7x24 nested list (heatmap[weekday][hour]) of message
+              counts, where weekday 0 is Monday.
+            - hourly_totals: list of 24 ints, total messages per hour.
+            - weekday_totals: list of 7 ints, total messages per weekday.
+    """
     heatmap = [[0] * 24 for _ in range(7)]  # [weekday][hour]
     hourly_totals = [0] * 24
     weekday_totals = [0] * 7
@@ -500,14 +661,41 @@ def compute_hourly_data(timestamps: list[datetime]) -> dict[str, Any]:
 
 
 def _safe_div(num: float, den: float, default: float = 0.0) -> float:
-    """Safe division returning *default* when denominator is zero."""
+    """Safe division returning *default* when denominator is zero.
+
+    Args:
+        num: Numerator.
+        den: Denominator.
+        default: Value to return when *den* is zero or falsy.
+
+    Returns:
+        ``round(num / den, 2)`` when *den* is truthy, otherwise *default*.
+    """
     return round(num / den, 2) if den else default
 
 
 def _content_metrics_from_records(
     sorted_records: list[dict],
 ) -> dict[str, list[float]]:
-    """Extract per-period content metric lists from sorted daily/aggregated records."""
+    """Extract per-period content metric lists from sorted daily/aggregated records.
+
+    Computes averages and percentages from the raw word/message/code counts
+    present in each record.
+
+    Args:
+        sorted_records: List of aggregate record dicts (daily, weekly, or
+            monthly), already sorted by date.  Each must contain
+            user_words, user_msgs, user_code_msgs, asst_words, asst_msgs,
+            and asst_code_msgs.
+
+    Returns:
+        Dict mapping metric names to parallel float lists:
+            - avg_user_words: average words per user message.
+            - avg_asst_words: average words per assistant message.
+            - response_ratio: assistant words / user words.
+            - code_pct_user: percentage of user messages containing code.
+            - code_pct_asst: percentage of assistant messages containing code.
+    """
     avg_user_words = [_safe_div(r["user_words"], r["user_msgs"]) for r in sorted_records]
     avg_asst_words = [_safe_div(r["asst_words"], r["asst_msgs"]) for r in sorted_records]
     response_ratio = [_safe_div(r["asst_words"], r["user_words"]) for r in sorted_records]
@@ -523,7 +711,15 @@ def _content_metrics_from_records(
 
 
 def _wrap_with_rolling(values: list[float]) -> dict[str, list[float]]:
-    """Wrap a metric series with 7-day and 28-day rolling averages."""
+    """Wrap a metric series with 7-day and 28-day rolling averages.
+
+    Args:
+        values: Raw metric series to augment with rolling averages.
+
+    Returns:
+        Dict with keys: values (the original series), avg_7d (7-period
+        rolling average), avg_28d (28-period rolling average).
+    """
     return {
         "values": values,
         "avg_7d": [round(v, 2) for v in _rolling_avg(values, 7)],
@@ -532,7 +728,18 @@ def _wrap_with_rolling(values: list[float]) -> dict[str, list[float]]:
 
 
 def compute_content_chart_data(daily_records: list[dict]) -> dict[str, Any]:
-    """Compute daily content metrics (word counts, response ratio, code %) with rolling averages."""
+    """Compute daily content metrics (word counts, response ratio, code %) with rolling averages.
+
+    Args:
+        daily_records: List of per-day aggregate dicts with content metric
+            fields (user_words, user_msgs, asst_words, asst_msgs, etc.).
+
+    Returns:
+        Dict with keys: dates (list of ISO date strings), and for each
+        content metric (avg_user_words, avg_asst_words, response_ratio,
+        code_pct_user, code_pct_asst) a sub-dict with values, avg_7d,
+        and avg_28d.
+    """
     sorted_records = sorted(daily_records, key=lambda r: r["date"])
     dates = [r["date"] for r in sorted_records]
     m = _content_metrics_from_records(sorted_records)
@@ -547,7 +754,18 @@ def compute_content_chart_data(daily_records: list[dict]) -> dict[str, Any]:
 
 
 def compute_content_weekly_data(daily_records: list[dict]) -> dict[str, Any]:
-    """Aggregate content metrics by ISO week."""
+    """Aggregate content metrics by ISO week.
+
+    Args:
+        daily_records: List of per-day aggregate dicts with content metric
+            fields (user_words, user_msgs, asst_words, asst_msgs, etc.).
+
+    Returns:
+        Dict with keys: weeks (list of Monday ISO date strings), and for
+        each content metric (avg_user_words, avg_asst_words,
+        response_ratio, code_pct_user, code_pct_asst) a sub-dict with
+        values, avg_7d, and avg_28d.
+    """
     from datetime import date as date_type
 
     sorted_records = sorted(daily_records, key=lambda r: r["date"])
@@ -583,7 +801,18 @@ def compute_content_weekly_data(daily_records: list[dict]) -> dict[str, Any]:
 
 
 def compute_content_monthly_data(daily_records: list[dict]) -> dict[str, Any]:
-    """Aggregate content metrics by calendar month."""
+    """Aggregate content metrics by calendar month.
+
+    Args:
+        daily_records: List of per-day aggregate dicts with content metric
+            fields (user_words, user_msgs, asst_words, asst_msgs, etc.).
+
+    Returns:
+        Dict with keys: months (list of "YYYY-MM" strings), and for each
+        content metric (avg_user_words, avg_asst_words, response_ratio,
+        code_pct_user, code_pct_asst) a sub-dict with values, avg_7d,
+        and avg_28d.
+    """
     sorted_records = sorted(daily_records, key=lambda r: r["date"])
     monthly: dict[str, dict] = {}
     for r in sorted_records:
@@ -612,7 +841,24 @@ def compute_content_monthly_data(daily_records: list[dict]) -> dict[str, Any]:
 
 
 def compute_code_stats(chat_summaries: list[dict]) -> dict[str, Any]:
-    """Compute code language breakdown from chat summaries."""
+    """Compute code language breakdown from chat summaries.
+
+    Counts how many conversations contain code fences and tallies the
+    programming languages detected across all conversations.
+
+    Args:
+        chat_summaries: List of per-conversation summary dicts (from
+            ``process_conversations``).  Each must contain a
+            "code_languages" key (list of language strings).
+
+    Returns:
+        Dict with keys:
+            - total_conversations_with_code: int, number of conversations
+              containing at least one code block.
+            - pct_with_code: float, percentage of conversations with code.
+            - language_counts: list of dicts (language, count), sorted
+              descending by count.
+    """
     lang_counter: dict[str, int] = {}
     convos_with_code = 0
     for s in chat_summaries:
@@ -648,7 +894,20 @@ _LENGTH_BUCKETS = [
 
 
 def compute_length_distribution(summaries: list[dict]) -> dict[str, Any]:
-    """Bucket conversation lengths into a histogram distribution."""
+    """Bucket conversation lengths into a histogram distribution.
+
+    Groups conversations by their message_count into predefined buckets
+    (1-2, 3-5, 6-10, 11-20, 21-50, 50+) for bar-chart rendering.
+
+    Args:
+        summaries: List of per-conversation summary dicts.  Each must
+            contain a "message_count" key (int).
+
+    Returns:
+        Dict with keys:
+            - buckets: list of bucket label strings (e.g., "1-2", "50+").
+            - counts: list of ints, number of conversations in each bucket.
+    """
     counts = [0] * len(_LENGTH_BUCKETS)
     for s in summaries:
         mc = s["message_count"]
@@ -666,7 +925,25 @@ def compute_period_comparison(
     daily_records: list[dict],
     reference_date: str | None = None,
 ) -> dict[str, Any]:
-    """Compute month-over-month and year-over-year comparison stats."""
+    """Compute month-over-month and year-over-year comparison stats.
+
+    Buckets daily records into this-month, last-month, this-year, and
+    last-year periods relative to *reference_date*.  For current
+    (partial) periods, includes pro-rata projections.
+
+    Args:
+        daily_records: List of per-day aggregate dicts.  Each must contain
+            "date" (ISO string), "total_chats", and "total_messages".
+        reference_date: ISO date string ("YYYY-MM-DD") to use as "today"
+            for period boundaries.  Defaults to the actual current date.
+
+    Returns:
+        Dict with keys this_month, last_month, this_year, last_year.
+        Each value is a dict with: chats, messages, avg_messages.
+        Current-period entries (this_month, this_year) additionally
+        include elapsed_days, total_days, projected_chats, and
+        projected_messages.
+    """
     from datetime import date as date_type
 
     if reference_date:
@@ -744,6 +1021,16 @@ def _top_records_per_year(records: list[dict], per_year: int = 10) -> list[dict]
     Records are already sorted by the desired ranking field (descending).
     Collects up to *per_year* per year, then returns the merged list
     in the original sort order.
+
+    Args:
+        records: Pre-sorted (descending by ranking metric) list of daily
+            record dicts.  Each must contain a "date" key starting with
+            a 4-digit year.
+        per_year: Maximum number of records to keep per calendar year.
+
+    Returns:
+        Filtered list of record dicts, containing at most *per_year*
+        entries per year, in the same order as the input.
     """
     buckets: dict[str, int] = {}
     result = []
@@ -759,8 +1046,19 @@ def _top_records_per_year(records: list[dict], per_year: int = 10) -> list[dict]
 def _top_gaps_per_year(gaps: list[dict], per_year: int = 25) -> list[dict]:
     """Return top *per_year* gaps for each calendar year, merged and sorted.
 
-    Gaps are already sorted longest-first.  We collect up to *per_year*
-    for each year (based on start_timestamp), merge, and re-sort descending.
+    Gaps are already sorted longest-first.  Collects up to *per_year*
+    for each year (based on start_timestamp), merges, and re-sorts
+    descending by length_days.
+
+    Args:
+        gaps: Pre-sorted (descending by length_days) list of gap dicts.
+            Each must contain "start_timestamp" (ISO string) and
+            "length_days".
+        per_year: Maximum number of gaps to keep per calendar year.
+
+    Returns:
+        Merged list of gap dicts, at most *per_year* per year, sorted
+        descending by length_days.
     """
     buckets: dict[str, list[dict]] = {}
     for g in gaps:
@@ -776,9 +1074,24 @@ def _top_gaps_per_year(gaps: list[dict], per_year: int = 25) -> list[dict]:
 def build_dashboard_payload(path: str = "conversations.json") -> dict[str, Any]:
     """One-call entry point: load, process, compute all stats for the dashboard.
 
-    Returns dict with keys: generated_at, summary, charts, gaps (top 25/year),
-    gap_stats, monthly, weekly, hourly, length_distribution, comparison,
-    activity_by_year.
+    Loads the conversation file, processes it, and runs every analytics
+    computation needed by the web dashboard.  This is the only function
+    the FastAPI app needs to call.
+
+    Args:
+        path: Filesystem path to the OpenAI conversations.json export.
+            Defaults to "conversations.json" in the current directory.
+
+    Returns:
+        Dict with keys: generated_at (ISO timestamp), summary, charts,
+        gaps (top 25/year), gap_stats, monthly, weekly, hourly,
+        length_distribution, comparison, activity_by_year,
+        content_charts, content_weekly, content_monthly, code_stats,
+        content_summary.
+
+    Raises:
+        FileNotFoundError: If the conversations file does not exist.
+        json.JSONDecodeError: If the file contains invalid JSON.
     """
     convos = load_conversations(path)
     summaries, records, timestamps = process_conversations(convos)
@@ -834,7 +1147,20 @@ def save_analytics_files(
     gaps: list[dict],
     output_dir: str = "chat_analytics",
 ) -> None:
-    """Write CSV/JSON analytics files to output_dir."""
+    """Write CSV/JSON analytics files to output_dir.
+
+    Creates the output directory if it doesn't exist and writes:
+    chat_summaries.json/csv, daily_stats.json/csv, and (if gaps is
+    non-empty) message_gaps.json/csv.
+
+    Args:
+        summaries: List of per-conversation summary dicts.
+        records: List of per-day aggregate dicts.
+        gaps: List of gap dicts (start_timestamp, end_timestamp,
+            length_days).  If empty, gap files are not written.
+        output_dir: Directory path for output files.  Created if it
+            doesn't exist.  Defaults to "chat_analytics".
+    """
     os.makedirs(output_dir, exist_ok=True)
 
     with open(f"{output_dir}/chat_summaries.json", "w") as f:
@@ -880,7 +1206,19 @@ def save_analytics_files(
 def print_summary_report(
     stats: dict[str, Any], gap_data: dict[str, Any]
 ) -> None:
-    """Print the CLI summary report to stdout."""
+    """Print the CLI summary report to stdout.
+
+    Formats and prints a human-readable summary including totals, date
+    range, top days, and inactivity analysis.
+
+    Args:
+        stats: Summary statistics dict (from ``compute_summary_stats``).
+            Must contain total_messages, total_chats, first_date,
+            last_date, years_span, top_days_by_chats, top_days_by_messages.
+        gap_data: Gap analysis dict (from ``compute_gap_analysis``).
+            Must contain total_days, days_active, days_inactive,
+            proportion_inactive, longest_gap, and gaps.
+    """
     print(f"\n{'=' * 60}")
     print("ChatGPT Usage Summary")
     print(f"{'=' * 60}")

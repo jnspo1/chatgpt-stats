@@ -7,13 +7,14 @@ messages. Use `--print` to print found prompts, or `--output FILE` to write the
 prompts to a file.
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 from datetime import datetime
-from typing import List, Optional, Tuple
 
 
-def extract_user_prompts(json_file: str, only_first_prompt: bool = False) -> List[str]:
+def extract_user_prompts(json_file: str, only_first_prompt: bool = False) -> list[str]:
     """Extract user prompts from a ChatGPT conversation JSON file.
 
     Args:
@@ -23,11 +24,15 @@ def extract_user_prompts(json_file: str, only_first_prompt: bool = False) -> Lis
 
     Returns:
         A list of extracted prompt strings.
+
+    Raises:
+        FileNotFoundError: If the JSON file does not exist.
+        json.JSONDecodeError: If the file is not valid JSON.
     """
     with open(json_file, 'r', encoding='utf-8') as file:
         data = json.load(file)
 
-    user_prompts: List[str] = []
+    user_prompts: list[str] = []
 
     def search_messages(item):
         if isinstance(item, dict):
@@ -50,10 +55,16 @@ def extract_user_prompts(json_file: str, only_first_prompt: bool = False) -> Lis
     return user_prompts
 
 
-def find_earliest_conversation(json_file: str) -> Tuple[Optional[dict], Optional[int]]:
+def find_earliest_conversation(json_file: str) -> tuple[dict | None, int | None]:
     """Return the conversation with the earliest message timestamp and that timestamp.
 
-    Returns (conversation_dict, earliest_timestamp) or (None, None) if not found.
+    Args:
+        json_file: Path to the conversations JSON file.
+
+    Returns:
+        A tuple of (conversation_dict, earliest_unix_timestamp), or
+        (None, None) if no valid conversations are found or the file
+        cannot be read.
     """
     try:
         with open(json_file, 'r', encoding='utf-8') as f:
@@ -86,8 +97,13 @@ def find_earliest_conversation(json_file: str) -> Tuple[Optional[dict], Optional
     return earliest_conv, earliest_time
 
 
-def format_and_print_conversation(conv: dict, title: Optional[str] = None) -> None:
-    """Pretty-print a conversation mapping (title optional)."""
+def format_and_print_conversation(conv: dict, title: str | None = None) -> None:
+    """Pretty-print a conversation mapping to stdout.
+
+    Args:
+        conv: A conversation dict with a 'mapping' key containing messages.
+        title: Optional title override. Defaults to the conversation's own title.
+    """
     if not conv or not isinstance(conv, dict):
         return
 
@@ -130,7 +146,8 @@ def format_and_print_conversation(conv: dict, title: Optional[str] = None) -> No
     print('\n' + '-' * 60 + '\n')
 
 
-def main():
+def main() -> None:
+    """CLI entry point for extracting user prompts from ChatGPT history."""
     parser = argparse.ArgumentParser(description='Extract user prompts from ChatGPT history JSON')
     parser.add_argument('json_file', nargs='?', default='conversations.json',
                         help='Path to the conversations JSON file (default: conversations.json)')

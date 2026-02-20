@@ -15,6 +15,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.requests import Request
 
 from pi_shared.fastapi import make_standard_router, setup_templates
@@ -31,7 +32,10 @@ app = FastAPI(title="ChatGPT Statistics Dashboard")
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 templates = setup_templates(TEMPLATES_DIR, "/chatgpt_stats")
 
-ICON_PATH = Path(__file__).parent / "static" / "app_icon.jpg"
+STATIC_DIR = Path(__file__).parent / "static"
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+ICON_PATH = STATIC_DIR / "app_icon.jpg"
 app.include_router(make_standard_router(ICON_PATH))
 
 _cache_lock = threading.Lock()
@@ -46,6 +50,15 @@ def _get_cached_data(force_refresh: bool = False) -> dict[str, Any]:
 
     Holds the lock during rebuild to prevent concurrent requests from
     each parsing the full conversations.json independently.
+
+    Args:
+        force_refresh: If True, bypass cache TTL and rebuild immediately.
+
+    Returns:
+        The full dashboard payload dict from build_dashboard_payload.
+
+    Raises:
+        HTTPException: 503 if conversations.json is missing, 500 if invalid JSON.
     """
     with _cache_lock:
         now = time.monotonic()
@@ -80,8 +93,15 @@ def _get_cached_data(force_refresh: bool = False) -> dict[str, Any]:
 
 
 @app.get("/", response_class=HTMLResponse)
-def overview(request: Request):
-    """Serve the overview dashboard page."""
+def overview(request: Request) -> HTMLResponse:
+    """Serve the overview dashboard page.
+
+    Args:
+        request: The incoming HTTP request.
+
+    Returns:
+        Rendered overview.html template with dashboard data.
+    """
     data = _get_cached_data()
     data_json = json.dumps(data, ensure_ascii=False).replace("</", r"<\/")
     return templates.TemplateResponse(
@@ -91,8 +111,15 @@ def overview(request: Request):
 
 
 @app.get("/trends", response_class=HTMLResponse)
-def trends(request: Request):
-    """Serve the trends page."""
+def trends(request: Request) -> HTMLResponse:
+    """Serve the trends page.
+
+    Args:
+        request: The incoming HTTP request.
+
+    Returns:
+        Rendered trends.html template with dashboard data.
+    """
     data = _get_cached_data()
     data_json = json.dumps(data, ensure_ascii=False).replace("</", r"<\/")
     return templates.TemplateResponse(
@@ -102,8 +129,15 @@ def trends(request: Request):
 
 
 @app.get("/patterns", response_class=HTMLResponse)
-def patterns(request: Request):
-    """Serve the patterns page."""
+def patterns(request: Request) -> HTMLResponse:
+    """Serve the patterns page.
+
+    Args:
+        request: The incoming HTTP request.
+
+    Returns:
+        Rendered patterns.html template with dashboard data.
+    """
     data = _get_cached_data()
     data_json = json.dumps(data, ensure_ascii=False).replace("</", r"<\/")
     return templates.TemplateResponse(
@@ -113,14 +147,22 @@ def patterns(request: Request):
 
 
 @app.get("/api/data")
-def api_data():
-    """Return the full dashboard JSON payload."""
+def api_data() -> dict[str, Any]:
+    """Return the full dashboard JSON payload.
+
+    Returns:
+        The complete dashboard data dict.
+    """
     return _get_cached_data()
 
 
 @app.get("/api/refresh")
-def api_refresh():
-    """Force a cache rebuild and return fresh data."""
+def api_refresh() -> dict[str, str]:
+    """Force a cache rebuild and return fresh data.
+
+    Returns:
+        Dict with 'status' and 'generated_at' keys.
+    """
     data = _get_cached_data(force_refresh=True)
     return {
         "status": "refreshed",

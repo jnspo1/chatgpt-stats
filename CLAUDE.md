@@ -76,6 +76,14 @@ No pandas or matplotlib — rolling averages computed in pure Python.
 - `chat_gpt_export.py` uses interactive menus — must be run in a terminal
 - Export date range depends on when the user requested it from OpenAI
 
+## Troubleshooting
+
+- **Slow first load (~15s):** Normal — `conversations.json` can be 100MB+. Data is cached for 1 hour after first parse. Use `/api/refresh` to force a rebuild.
+- **503 "Data file not found":** Place `conversations.json` in the project root (download from OpenAI: Settings > Data Controls > Export).
+- **500 "Invalid JSON":** The `conversations.json` file is corrupted or incomplete. Re-download from OpenAI.
+- **Cache not refreshing:** Cache TTL is 1 hour. Force refresh via `/api/refresh` or restart the service: `sudo systemctl restart chatgpt-stats`.
+- **Check logs:** `sudo journalctl -u chatgpt-stats -f --no-pager -n 50`
+
 ## UI Design System
 
 Theme: **blue** (`<html data-theme="blue">`). Shared CSS: `/shared/pi-design.css`. Skill: `~/.claude/skills/fastapi-ui-design-system.md`.

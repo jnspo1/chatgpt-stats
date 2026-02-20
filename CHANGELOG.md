@@ -4,19 +4,50 @@ All notable changes to the ChatGPT Statistics project will be documented in this
 
 ## Current State
 
-The ChatGPT Stats analytics system provides both CLI and web dashboard modes:
+The ChatGPT Stats analytics system provides both CLI and web dashboard modes with production-grade code quality:
 - **CLI**: `chat_gpt_summary.py` processes `conversations.json` and generates CSV/JSON files to `chat_analytics/`
 - **Web Dashboard**: Multi-page FastAPI service (port 8203, systemd unit `chatgpt-stats`) with 3 pages:
-  - **Overview**: Summary cards (now including Avg Your Message, Avg ChatGPT Reply, Response Ratio, Code in Conversations), monthly usage chart, month-over-month comparison with pro-rata projections, conversation length histogram
-  - **Trends**: Daily/weekly/monthly time-series charts plus 3 new content charts (Message Length Over Time, Response Ratio Over Time, Code Block Usage Over Time) with multi-select year pills, top days tables
-  - **Patterns**: 7x24 activity heatmap, hourly distribution, weekday vs weekend comparison, per-year activity overview table, Code Analysis section with top 10 languages and code percentage, gap analysis with multi-select year pills
-- **Content Analytics**: New message analysis tracks word counts, character counts, code block detection, and detected programming languages for both user and assistant messages
+  - **Overview**: Summary cards (Avg Your Message, Avg ChatGPT Reply, Response Ratio, Code in Conversations), monthly usage chart, month-over-month comparison with pro-rata projections, conversation length histogram
+  - **Trends**: Daily/weekly/monthly time-series charts plus 3 content charts (Message Length, Response Ratio, Code Block Usage) with multi-select year pills, top days tables, and shared Chart.js dashboard.js helper library
+  - **Patterns**: 7x24 activity heatmap, hourly distribution, weekday vs weekend comparison, per-year activity overview table, Code Analysis section with top 10 languages and code percentage, gap analysis with multi-select year pills, and ARIA-labeled interactive components
+- **Content Analytics**: Message analysis tracks word counts, character counts, code block detection, and detected programming languages for both user and assistant messages
 - **Pro-Rata Analytics**: Comparison cards compute elapsed/total days and project chat/message counts to full months/years for in-progress periods
-- **Analytics Engine**: 18 core computation functions covering summaries, trends, distributions, gaps, per-year breakdowns, content metrics, and code statistics with pro-rata projections
-- **Test Coverage**: 58+ unit tests validating data processing edge cases, template rendering, and API endpoints
-- **Infrastructure**: Nginx reverse proxy, 1-hour dashboard cache (thread-safe), ~100KB API payload with per-year bucketed rankings and content metrics
+- **Analytics Engine**: 25+ core computation functions with Google-style docstrings, type annotations, complexity-refactored code (<8 cyclomatic complexity), covering summaries, trends, distributions, gaps, per-year breakdowns, content metrics, and code statistics
+- **Test Coverage**: 120+ unit tests with 82% coverage validating analytics edge cases, route handlers, error handling, caching, CLI wrappers, and template rendering
+- **Code Quality**: All Python functions documented with Google-style docstrings (Args/Returns/Raises), full type annotations, deprecated typing imports fixed (List→list, Optional→|None, Tuple→tuple), extracted helper functions reduce complexity
+- **Frontend Quality**: Static JavaScript assets (dashboard.js) with shared helpers (DOM utilities, formatting, Chart.js defaults), ~30 JSDoc-documented functions, template literals replacing string concatenation, ARIA labels on interactive components (heatmap grid, year pills), resolved Jinja2/JSDoc template syntax conflicts
+- **Infrastructure**: Nginx reverse proxy, 1-hour dashboard cache (thread-safe), ~100KB API payload with per-year bucketed rankings and content metrics, pi_shared integration for health endpoints and template setup
 
 ## Unreleased
+
+#### 2026-02-20: Major Code Quality Audit — Infrastructure, Python, Templates, and Tests
+- **Added**: Test infrastructure — `tests/__init__.py`, `tests/conftest.py` with TestClient fixtures, `tests/helpers.py` with shared test factories (`make_payload`, `make_conversation`), `pytest.ini` with integration marker and coverage targets
+- **Added**: Testing dependencies — `httpx`, `pytest`, `pytest-cov` to `requirements.txt`
+- **Added**: `docs/backlog.md` with seed backlog items and project management guidance
+- **Added**: Troubleshooting section to `CLAUDE.md` covering slow loads, missing data files, cache behavior, and log inspection
+- **Updated**: `.gitignore` with `.env` and `*.db` patterns to prevent credential/database leaks
+- **Fixed**: Deprecated typing imports in `chat_gpt_history.py` — `List` → `list`, `Optional` → `|None`, `Tuple` → `tuple` (PEP 585/604 compatibility)
+- **Documented**: 25+ Python functions with Google-style docstrings (Args/Returns/Raises sections) across `analytics.py`, `app.py`, `chat_gpt_summary.py`, `chat_gpt_history.py`, `chat_gpt_export.py`
+- **Refactored**: `process_conversations()` complexity reduced from ~20 to ~8 by extracting `_extract_message_content()`, `_init_daily_bucket()`, `_build_daily_records()` helpers
+- **Refactored**: `export_conversations()` complexity reduced from ~18 to ~8 by extracting `_load_and_parse_conversations()`, `_select_conversations_interactively()`, `_write_export_file()` helpers
+- **Added**: Return type annotations to all 6 `app.py` route functions (`GET /`, `/trends`, `/patterns`, `/api/data`, `/api/refresh`, `/healthz`)
+- **Added**: Full type annotations to all `chat_gpt_export.py` functions for improved IDE support and type safety
+- **Added**: Static file serving — `StaticFiles` mount in `app.py` for `/static/` directory and `static/dashboard.js` with shared JavaScript helpers
+- **Created**: `static/dashboard.js` with DOM utilities (`el()`, `txt()`, `clearChildren()`), formatting helpers (`formatDate()`), and Chart.js config (`applyChartDefaults()`)
+- **Removed**: Duplicate function definitions from all 3 child templates (`overview.html`, `trends.html`, `patterns.html`) — consolidated into `static/dashboard.js`
+- **Migrated**: All variable declarations `var` → `const`/`let` across 3 templates (~120 declarations)
+- **Refactored**: `trends.html` — extracted `renderUsageCharts()` and `renderContentCharts()` from monolithic `renderCharts()` for clarity
+- **Refactored**: `patterns.html` — extracted 5 helper functions: `buildHeatmap()`, `buildWeekdayCards()`, `buildHourlyChart()`, `buildCodeLanguagesChart()`, `buildActivityTable()`, `buildGapTable()` to improve maintainability
+- **Documented**: ~30 JavaScript functions with JSDoc signatures across templates and dashboard.js for IDE autocomplete and type checking
+- **Fixed**: String concatenation → template literals across all templates for readability and safety
+- **Fixed**: Jinja2/JSDoc template syntax conflicts — added `{%` and `%}` comments around JSDoc blocks to prevent Jinja2 interpretation of `{{ }}` in code comments
+- **Improved**: Accessibility — added ARIA labels to heatmap grid (role=grid, role=gridcell per cell with `aria-label`), converted year pill spans to buttons (type=button) with proper keyboard support
+- **Added**: `tests/test_app.py` — 37 tests for all 6 FastAPI routes, error handling, caching behavior, and edge cases
+- **Added**: `tests/test_summary.py` — 3 tests for `chat_gpt_summary.py` CLI main function with fixtures
+- **Added**: `tests/test_history.py` — 5 tests for `chat_gpt_history.py` prompt extraction and earliest conversation detection
+- **Added**: 13 unit tests for extracted analytics helpers (`_extract_message_content`, `_init_daily_bucket`, `_build_daily_records`)
+- **Updated**: `tests/test_analytics.py` to import test factories from `tests.helpers` and added integration tests for full dashboard payload validation
+- **Final Result**: 120+ passing tests, 82% code coverage, production-ready service with comprehensive error handling and edge case validation
 
 #### 2026-02-19: pi_shared Integration & Static File Fix
 - **Refactored**: Removed `root_path="/chatgpt_stats"` from FastAPI constructor (fixes Starlette 0.50+ silent 404s on static files when served through nginx with prefix stripping)

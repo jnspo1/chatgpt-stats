@@ -33,33 +33,14 @@
 {% block scripts %}
 <script>
 (function() {
-  var D = DASHBOARD_DATA;
+  const D = DASHBOARD_DATA;
   if (!D.summary) return;
 
-  // ── Helpers ──────────────────────────────
-  function el(tag, attrs, children) {
-    var e = document.createElement(tag);
-    if (attrs) Object.keys(attrs).forEach(function(k) {
-      if (k === 'className') e.className = attrs[k];
-      else if (k === 'textContent') e.textContent = attrs[k];
-      else e.setAttribute(k, attrs[k]);
-    });
-    if (children) children.forEach(function(c) { if (c) e.appendChild(c); });
-    return e;
-  }
-
-  function txt(tag, text, cls) {
-    var e = document.createElement(tag);
-    e.textContent = text;
-    if (cls) e.className = cls;
-    return e;
-  }
-
   // ── Summary Cards ────────────────────────
-  var s = D.summary;
-  var gs = D.gap_stats || {};
-  var longestGap = gs.longest_gap ? gs.longest_gap.length_days.toFixed(1) + 'd' : '\u2014';
-  var cardsData = [
+  const s = D.summary;
+  const gs = D.gap_stats || {};
+  const longestGap = gs.longest_gap ? gs.longest_gap.length_days.toFixed(1) + 'd' : '\u2014';
+  const cardsData = [
     { label: 'Total Chats', value: s.total_chats.toLocaleString(), accent: true },
     { label: 'Total Messages', value: s.total_messages.toLocaleString(), accent: true },
     { label: 'Date Range', value: s.first_date ? s.first_date + ' \u2192 ' + s.last_date : '\u2014', small: true },
@@ -69,7 +50,7 @@
   ];
 
   // Content analytics cards
-  var cs = D.content_summary || {};
+  const cs = D.content_summary || {};
   if (cs.avg_user_words != null) {
     cardsData.push({ label: 'Avg Your Message', value: cs.avg_user_words.toLocaleString() + ' words' });
     cardsData.push({ label: 'Avg ChatGPT Reply', value: cs.avg_asst_words.toLocaleString() + ' words' });
@@ -77,12 +58,12 @@
     cardsData.push({ label: 'Code in Conversations', value: cs.pct_conversations_with_code + '%' });
   }
 
-  var cardsEl = document.getElementById('cards');
+  const cardsEl = document.getElementById('cards');
   cardsData.forEach(function(c) {
-    var valCls = 'value';
+    let valCls = 'value';
     if (c.accent) valCls += ' accent';
     if (c.small) valCls += ' small';
-    var children = [
+    const children = [
       txt('div', c.label, 'label'),
       txt('div', c.value, valCls),
     ];
@@ -90,42 +71,50 @@
     cardsEl.appendChild(el('div', { className: 'card fade-in' }, children));
   });
 
-  // ── Chart.js defaults ────────────────────
-  Chart.defaults.color = '#8a877e';
-  Chart.defaults.borderColor = '#2a2d3a';
-  Chart.defaults.font.family = "'DM Sans', sans-serif";
-  Chart.defaults.font.size = 11;
+  applyChartDefaults();
 
   // ── Comparison Cards ─────────────────────
-  var comp = D.comparison;
+  const comp = D.comparison;
   if (comp) {
-    var grid = document.getElementById('comparison-grid');
+    const grid = document.getElementById('comparison-grid');
 
+    // Computes a percentage change label and CSS class between two values.
+    // newVal: current (new) value
+    // oldVal: previous (old) value to compare against
+    // returns: Object with text and cls properties for display
     function pctChange(newVal, oldVal) {
       if (oldVal === 0) return newVal > 0 ? { text: 'New', cls: 'up' } : { text: '\u2014', cls: 'neutral' };
-      var pct = ((newVal - oldVal) / oldVal * 100).toFixed(0);
+      const pct = ((newVal - oldVal) / oldVal * 100).toFixed(0);
       if (pct > 0) return { text: '+' + pct + '%', cls: 'up' };
       if (pct < 0) return { text: pct + '%', cls: 'down' };
       return { text: '0%', cls: 'neutral' };
     }
 
+    /**
+     * Builds a comparison card DOM element for a given time period.
+     * @param {string} title - Card heading (e.g. "This Month vs Last Month").
+     * @param {Object} current - Stats for the current period (chats, messages, avg_messages, projected_chats, projected_messages).
+     * @param {Object} previous - Stats for the previous period (chats, messages, avg_messages).
+     * @param {string} [subtitle] - Optional subtitle text shown below the heading.
+     * @returns {HTMLElement} The constructed comparison card element.
+     */
     function buildComparisonCard(title, current, previous, subtitle) {
-      var card = el('div', { className: 'comparison-card' });
+      const card = el('div', { className: 'comparison-card' });
       card.appendChild(txt('h3', title));
       if (subtitle) card.appendChild(txt('div', subtitle, 'comparison-subtitle'));
 
-      var metrics = [
+      const metrics = [
         { label: 'Chats', cur: current.chats, prev: previous.chats, proj: current.projected_chats },
         { label: 'Messages', cur: current.messages, prev: previous.messages, proj: current.projected_messages },
         { label: 'Avg msgs/chat', cur: current.avg_messages, prev: previous.avg_messages },
       ];
 
       metrics.forEach(function(m) {
-        var compareVal = m.proj != null ? m.proj : m.cur;
-        var change = pctChange(compareVal, m.prev);
-        var row = el('div', { className: 'comparison-row' });
+        const compareVal = m.proj != null ? m.proj : m.cur;
+        const change = pctChange(compareVal, m.prev);
+        const row = el('div', { className: 'comparison-row' });
         row.appendChild(txt('span', m.label, 'comparison-label'));
-        var vals = el('div', { className: 'comparison-values' });
+        const vals = el('div', { className: 'comparison-values' });
         vals.appendChild(txt('span', m.prev.toLocaleString(), 'comparison-old'));
         vals.appendChild(txt('span', '\u2192'));
         vals.appendChild(txt('span', m.cur.toLocaleString(), 'comparison-new'));
@@ -140,8 +129,8 @@
       return card;
     }
 
-    var tmSub = comp.this_month.elapsed_days + ' of ' + comp.this_month.total_days + ' days';
-    var tySub = comp.this_year.elapsed_days + ' of ' + comp.this_year.total_days + ' days';
+    const tmSub = comp.this_month.elapsed_days + ' of ' + comp.this_month.total_days + ' days';
+    const tySub = comp.this_year.elapsed_days + ' of ' + comp.this_year.total_days + ' days';
 
     grid.appendChild(buildComparisonCard(
       'This Month vs Last Month', comp.this_month, comp.last_month, tmSub
@@ -152,10 +141,10 @@
   }
 
   // ── Monthly Usage Chart ──────────────────
-  var monthly = D.monthly;
+  const monthly = D.monthly;
   if (monthly && monthly.months && monthly.months.length) {
-    var ctx = document.getElementById('chart-monthly').getContext('2d');
-    var labels = monthly.months.map(function(m) { return m + '-01T00:00:00'; });
+    const ctx = document.getElementById('chart-monthly').getContext('2d');
+    const labels = monthly.months.map(function(m) { return m + '-01T00:00:00'; });
 
     new Chart(ctx, {
       data: {
@@ -213,9 +202,9 @@
   }
 
   // ── Length Distribution Histogram ─────────
-  var dist = D.length_distribution;
+  const dist = D.length_distribution;
   if (dist && dist.buckets && dist.buckets.length) {
-    var ctx2 = document.getElementById('chart-length').getContext('2d');
+    const ctx2 = document.getElementById('chart-length').getContext('2d');
 
     new Chart(ctx2, {
       type: 'bar',

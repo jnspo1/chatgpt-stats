@@ -18,6 +18,15 @@ from analytics import (
 
 
 def main(json_path: str = "conversations.json") -> None:
+    """Load conversations, compute analytics, save files, and print report.
+
+    Args:
+        json_path: Path to the OpenAI conversations.json export file.
+            Defaults to 'conversations.json' in the current directory.
+
+    Raises:
+        SystemExit: With code 1 if the file is missing or contains invalid JSON.
+    """
     try:
         convos = load_conversations(json_path)
     except FileNotFoundError:

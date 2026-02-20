@@ -54,60 +54,47 @@
 {% block scripts %}
 <script>
 (function() {
-  var D = DASHBOARD_DATA;
+  const D = DASHBOARD_DATA;
   if (!D.summary) return;
 
-  // ── Helpers ──
-  function formatDate(isoStr) {
-    var d = new Date(isoStr);
-    return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-  }
-  function el(tag, attrs, children) {
-    var e = document.createElement(tag);
-    if (attrs) Object.keys(attrs).forEach(function(k) {
-      if (k === 'className') e.className = attrs[k];
-      else if (k === 'textContent') e.textContent = attrs[k];
-      else e.setAttribute(k, attrs[k]);
-    });
-    if (children) children.forEach(function(c) { if (c) e.appendChild(c); });
-    return e;
-  }
-  function txt(tag, text, cls) {
-    var e = document.createElement(tag);
-    e.textContent = text;
-    if (cls) e.className = cls;
-    return e;
-  }
-  function clearChildren(node) {
-    while (node.firstChild) node.removeChild(node.firstChild);
-  }
-
-  // ── Chart.js defaults ──
-  Chart.defaults.color = '#8a877e';
-  Chart.defaults.borderColor = '#2a2d3a';
-  Chart.defaults.font.family = "'DM Sans', sans-serif";
-  Chart.defaults.font.size = 11;
+  applyChartDefaults();
 
   // ── State ──
-  var currentGranularity = 'weekly';
-  var selectedYears = ['All'];
-  var chartInstances = [];
+  let currentGranularity = 'weekly';
+  let selectedYears = ['All'];
+  let chartInstances = [];
 
-  // ── Data extraction by granularity ──
+  /**
+   * Return the content-metrics source object for the given granularity.
+   * @param {string} granularity - 'daily' | 'weekly' | 'monthly'
+   * @returns {Object|undefined} Content source data or undefined if unavailable
+   */
   function getContentSource(granularity) {
     if (granularity === 'daily') return D.content_charts;
     if (granularity === 'weekly') return D.content_weekly;
     return D.content_monthly;
   }
 
+  /**
+   * Extract date labels from the content source for the given granularity.
+   * Monthly dates get '-01' appended so Chart.js can parse them as time values.
+   * @param {string} granularity - 'daily' | 'weekly' | 'monthly'
+   * @returns {string[]} Array of date strings
+   */
   function getContentDates(granularity) {
-    var src = getContentSource(granularity);
+    const src = getContentSource(granularity);
     if (!src) return [];
-    if (granularity === 'monthly') return (src.months || []).map(function(m) { return m + '-01'; });
+    if (granularity === 'monthly') return (src.months || []).map(function(m) { return `${m}-01`; });
     if (granularity === 'weekly') return src.weeks || [];
     return src.dates || [];
   }
 
+  /**
+   * Build the full dataset descriptor (dates, bar values, rolling-average lines)
+   * for the three usage charts at the requested granularity.
+   * @param {string} granularity - 'daily' | 'weekly' | 'monthly'
+   * @returns {Object} Dataset descriptor with dates, chats, avg_messages, total_messages, timeUnit, dateFormat
+   */
   function getDatasets(granularity) {
     if (granularity === 'daily') {
       return {
@@ -147,7 +134,7 @@
       };
     } else { // monthly
       return {
-        dates: D.monthly.months.map(function(m) { return m + '-01'; }),
+        dates: D.monthly.months.map(function(m) { return `${m}-01`; }),
         chats: { values: D.monthly.chats, lines: [
           { label: '3-month avg', data: D.monthly.chats_avg_3m, color: '#e06c6c' },
         ]},
@@ -161,15 +148,22 @@
     }
   }
 
-  // ── Year filtering ──
+  /**
+   * Filter parallel arrays by selected years. Returns only entries whose date
+   * string starts with one of the selected year values.
+   * @param {string[]} dates - Array of date strings (YYYY-MM-DD or similar)
+   * @param {Array[]} arrays - Parallel data arrays to filter in sync with dates
+   * @param {string[]} years - Selected year strings, or ['All'] for no filtering
+   * @returns {Object} Object with dates (string[]) and arrays (Array[]) filtered by year
+   */
   function filterByYear(dates, arrays, years) {
     if (years.indexOf('All') >= 0 || years.length === 0) return { dates: dates, arrays: arrays };
-    var filtered = { dates: [], arrays: arrays.map(function() { return []; }) };
-    for (var i = 0; i < dates.length; i++) {
-      var yr = dates[i].substring(0, 4);
+    const filtered = { dates: [], arrays: arrays.map(function() { return []; }) };
+    for (let i = 0; i < dates.length; i++) {
+      const yr = dates[i].substring(0, 4);
       if (years.indexOf(yr) >= 0) {
         filtered.dates.push(dates[i]);
-        for (var j = 0; j < arrays.length; j++) {
+        for (let j = 0; j < arrays.length; j++) {
           filtered.arrays[j].push(arrays[j][i]);
         }
       }
@@ -177,12 +171,22 @@
     return filtered;
   }
 
-  // ── Build a chart ──
+  /**
+   * Create a bar+line Chart.js chart on the given canvas.
+   * Bar data is the primary series; lines are rolling-average overlays.
+   * @param {string} canvasId - DOM id of the target canvas element
+   * @param {string[]} dates - X-axis date labels
+   * @param {number[]} barData - Bar series values
+   * @param {string} barColor - CSS colour for the bar fill
+   * @param {string} barLabel - Legend label for the bar series
+   * @param {Array<{label: string, data: number[], color: string}>} lines - Rolling-average line overlays
+   * @returns {Chart} The Chart.js instance
+   */
   function buildChart(canvasId, dates, barData, barColor, barLabel, lines) {
-    var ctx = document.getElementById(canvasId).getContext('2d');
-    var labels = dates.map(function(d) { return d.indexOf('T') >= 0 ? d : d + 'T00:00:00'; });
+    const ctx = document.getElementById(canvasId).getContext('2d');
+    const labels = dates.map(function(d) { return d.indexOf('T') >= 0 ? d : `${d}T00:00:00`; });
 
-    var datasets = [{
+    const datasets = [{
       type: 'bar', label: barLabel, data: barData,
       backgroundColor: barColor, borderWidth: 0,
       barPercentage: 1.0, categoryPercentage: 1.0, order: 2,
@@ -196,7 +200,7 @@
       });
     });
 
-    var chart = new Chart(ctx, {
+    const chart = new Chart(ctx, {
       data: { labels: labels, datasets: datasets },
       options: {
         responsive: true, maintainAspectRatio: false,
@@ -223,15 +227,26 @@
     return chart;
   }
 
-  // ── Build a line-only chart (for content metrics) ──
+  /**
+   * Create a line-only Chart.js chart on the given canvas, used for content
+   * metrics (message length, response ratio, code usage).
+   * @param {string} canvasId - DOM id of the target canvas element
+   * @param {string[]} dates - X-axis date labels
+   * @param {Array<{label: string, data: number[], color: string, dashed?: boolean, fill?: boolean, fillColor?: string}>} seriesList - Line series descriptors
+   * @param {Object} [opts] - Optional chart configuration
+   * @param {string} [opts.tooltipSuffix] - Suffix appended to tooltip values (e.g. ' words', '%')
+   * @param {number} [opts.yMax] - Fixed maximum for the Y axis
+   * @param {string} [opts.ySuffix] - Suffix appended to Y-axis tick labels
+   * @returns {Chart} The Chart.js instance
+   */
   function buildLineChart(canvasId, dates, seriesList, opts) {
-    var ctx = document.getElementById(canvasId).getContext('2d');
-    var labels = dates.map(function(d) { return d.indexOf('T') >= 0 ? d : d + 'T00:00:00'; });
+    const ctx = document.getElementById(canvasId).getContext('2d');
+    const labels = dates.map(function(d) { return d.indexOf('T') >= 0 ? d : `${d}T00:00:00`; });
     opts = opts || {};
 
-    var datasets = [];
+    const datasets = [];
     seriesList.forEach(function(s) {
-      var ds = {
+      const ds = {
         type: 'line', label: s.label, data: s.data,
         borderColor: s.color, borderWidth: s.dashed ? 1.5 : 2,
         pointRadius: 0, pointHoverRadius: 3, tension: 0.3,
@@ -244,10 +259,10 @@
       datasets.push(ds);
     });
 
-    var yConfig = { beginAtZero: true, grid: { color: '#1e2029' } };
+    const yConfig = { beginAtZero: true, grid: { color: '#1e2029' } };
     if (opts.yMax) yConfig.max = opts.yMax;
     if (opts.ySuffix) {
-      yConfig.ticks = { callback: function(v) { return v + opts.ySuffix; } };
+      yConfig.ticks = { callback: function(v) { return `${v}${opts.ySuffix}`; } };
     }
 
     return new Chart(ctx, {
@@ -263,9 +278,9 @@
             bodyFont: { size: 12 }, padding: 10,
             callbacks: {
               title: function(items) { return items.length ? formatDate(items[0].label) : ''; },
-              label: function(ctx) {
-                var sfx = opts.tooltipSuffix || '';
-                return ctx.dataset.label + ': ' + ctx.parsed.y.toLocaleString(undefined, {maximumFractionDigits: 1}) + sfx;
+              label: function(tipCtx) {
+                const sfx = opts.tooltipSuffix || '';
+                return `${tipCtx.dataset.label}: ${tipCtx.parsed.y.toLocaleString(undefined, {maximumFractionDigits: 1})}${sfx}`;
               }
             }
           },
@@ -279,16 +294,92 @@
     });
   }
 
-  // ── Render all charts ──
+  /**
+   * Render the three usage charts (chat frequency, avg messages, total messages)
+   * using bar+line format with rolling-average overlays.
+   * @param {Object} filtered - Year-filtered dataset with dates (string[]) and arrays (Array[])
+   * @param {Object} ds - Raw dataset descriptor from getDatasets
+   * @returns {number} The next unused index into filtered.arrays (for caller bookkeeping)
+   */
+  function renderUsageCharts(filtered, ds) {
+    let idx = 0;
+
+    const chatsValues = filtered.arrays[idx++];
+    const avgMsgsValues = filtered.arrays[idx++];
+    const totalMsgsValues = filtered.arrays[idx++];
+
+    const chatsLines = ds.chats.lines.map(function(l) { return { label: l.label, data: filtered.arrays[idx++], color: l.color }; });
+    const avgMsgsLines = ds.avg_messages.lines.map(function(l) { return { label: l.label, data: filtered.arrays[idx++], color: l.color }; });
+    const totalMsgsLines = ds.total_messages.lines.map(function(l) { return { label: l.label, data: filtered.arrays[idx++], color: l.color }; });
+
+    chartInstances.push(buildChart('chart-chats', filtered.dates, chatsValues, 'rgba(108,180,217,0.5)', 'Chats', chatsLines));
+    chartInstances.push(buildChart('chart-avg-messages', filtered.dates, avgMsgsValues, 'rgba(92,184,112,0.5)', 'Avg Messages/Chat', avgMsgsLines));
+    chartInstances.push(buildChart('chart-total-messages', filtered.dates, totalMsgsValues, 'rgba(224,138,122,0.5)', 'Messages', totalMsgsLines));
+  }
+
+  /**
+   * Render the three content charts (message length, response ratio, code usage)
+   * using line-only format with 28-day rolling averages.
+   * Skipped silently when content data is unavailable.
+   */
+  function renderContentCharts() {
+    const csrc = getContentSource(currentGranularity);
+    if (!csrc) return;
+
+    const cDates = getContentDates(currentGranularity);
+    // Collect all content arrays for year filtering
+    const contentArrays = [
+      csrc.avg_user_words.values, csrc.avg_user_words.avg_28d,
+      csrc.avg_asst_words.values, csrc.avg_asst_words.avg_28d,
+      csrc.response_ratio.values, csrc.response_ratio.avg_28d,
+      csrc.code_pct_user.values, csrc.code_pct_user.avg_28d,
+      csrc.code_pct_asst.values, csrc.code_pct_asst.avg_28d,
+    ];
+
+    const cf = filterByYear(cDates, contentArrays, selectedYears);
+    let ci = 0;
+    const userWordsV = cf.arrays[ci++], userWords28 = cf.arrays[ci++];
+    const asstWordsV = cf.arrays[ci++], asstWords28 = cf.arrays[ci++];
+    const ratioV = cf.arrays[ci++], ratio28 = cf.arrays[ci++];
+    const codePctUserV = cf.arrays[ci++], codePctUser28 = cf.arrays[ci++];
+    const codePctAsstV = cf.arrays[ci++], codePctAsst28 = cf.arrays[ci++];
+
+    // Chart 4: Message Length
+    chartInstances.push(buildLineChart('chart-msg-length', cf.dates, [
+      { label: 'Your avg words', data: userWordsV, color: '#6cb4d9' },
+      { label: 'Your 28d avg', data: userWords28, color: '#6cb4d9', dashed: true },
+      { label: 'ChatGPT avg words', data: asstWordsV, color: '#e5a54b' },
+      { label: 'ChatGPT 28d avg', data: asstWords28, color: '#e5a54b', dashed: true },
+    ], { tooltipSuffix: ' words' }));
+
+    // Chart 5: Response Ratio
+    chartInstances.push(buildLineChart('chart-response-ratio', cf.dates, [
+      { label: 'Response ratio', data: ratioV, color: '#a07ce0', fill: true, fillColor: 'rgba(160,124,224,0.12)' },
+      { label: '28d avg', data: ratio28, color: '#a07ce0', dashed: true },
+    ], { tooltipSuffix: 'x' }));
+
+    // Chart 6: Code Block Usage
+    chartInstances.push(buildLineChart('chart-code-usage', cf.dates, [
+      { label: '% your msgs with code', data: codePctUserV, color: '#6cb4d9' },
+      { label: 'Your 28d avg', data: codePctUser28, color: '#6cb4d9', dashed: true },
+      { label: '% ChatGPT msgs with code', data: codePctAsstV, color: '#e08a7a' },
+      { label: 'ChatGPT 28d avg', data: codePctAsst28, color: '#e08a7a', dashed: true },
+    ], { tooltipSuffix: '%', yMax: 100 }));
+  }
+
+  /**
+   * Render (or re-render) all six trend charts. Destroys any existing chart
+   * instances first, then delegates to renderUsageCharts and renderContentCharts.
+   */
   function renderCharts() {
     // Destroy existing
     chartInstances.forEach(function(c) { c.destroy(); });
     chartInstances = [];
 
-    var ds = getDatasets(currentGranularity);
+    const ds = getDatasets(currentGranularity);
 
     // Build arrays for year filtering
-    var allArrays = [
+    const allArrays = [
       ds.chats.values,
       ds.avg_messages.values,
       ds.total_messages.values,
@@ -298,71 +389,25 @@
     ds.avg_messages.lines.forEach(function(l) { allArrays.push(l.data); });
     ds.total_messages.lines.forEach(function(l) { allArrays.push(l.data); });
 
-    var f = filterByYear(ds.dates, allArrays, selectedYears);
-    var idx = 0;
+    const filtered = filterByYear(ds.dates, allArrays, selectedYears);
 
-    var chatsValues = f.arrays[idx++];
-    var avgMsgsValues = f.arrays[idx++];
-    var totalMsgsValues = f.arrays[idx++];
-
-    var chatsLines = ds.chats.lines.map(function(l) { return { label: l.label, data: f.arrays[idx++], color: l.color }; });
-    var avgMsgsLines = ds.avg_messages.lines.map(function(l) { return { label: l.label, data: f.arrays[idx++], color: l.color }; });
-    var totalMsgsLines = ds.total_messages.lines.map(function(l) { return { label: l.label, data: f.arrays[idx++], color: l.color }; });
-
-    chartInstances.push(buildChart('chart-chats', f.dates, chatsValues, 'rgba(108,180,217,0.5)', 'Chats', chatsLines));
-    chartInstances.push(buildChart('chart-avg-messages', f.dates, avgMsgsValues, 'rgba(92,184,112,0.5)', 'Avg Messages/Chat', avgMsgsLines));
-    chartInstances.push(buildChart('chart-total-messages', f.dates, totalMsgsValues, 'rgba(224,138,122,0.5)', 'Messages', totalMsgsLines));
-
-    // ── Content charts ──
-    var csrc = getContentSource(currentGranularity);
-    if (csrc) {
-      var cDates = getContentDates(currentGranularity);
-      // Collect all content arrays for year filtering
-      var contentArrays = [
-        csrc.avg_user_words.values, csrc.avg_user_words.avg_28d,
-        csrc.avg_asst_words.values, csrc.avg_asst_words.avg_28d,
-        csrc.response_ratio.values, csrc.response_ratio.avg_28d,
-        csrc.code_pct_user.values, csrc.code_pct_user.avg_28d,
-        csrc.code_pct_asst.values, csrc.code_pct_asst.avg_28d,
-      ];
-
-      var cf = filterByYear(cDates, contentArrays, selectedYears);
-      var ci = 0;
-      var userWordsV = cf.arrays[ci++], userWords28 = cf.arrays[ci++];
-      var asstWordsV = cf.arrays[ci++], asstWords28 = cf.arrays[ci++];
-      var ratioV = cf.arrays[ci++], ratio28 = cf.arrays[ci++];
-      var codePctUserV = cf.arrays[ci++], codePctUser28 = cf.arrays[ci++];
-      var codePctAsstV = cf.arrays[ci++], codePctAsst28 = cf.arrays[ci++];
-
-      // Chart 4: Message Length
-      chartInstances.push(buildLineChart('chart-msg-length', cf.dates, [
-        { label: 'Your avg words', data: userWordsV, color: '#6cb4d9' },
-        { label: 'Your 28d avg', data: userWords28, color: '#6cb4d9', dashed: true },
-        { label: 'ChatGPT avg words', data: asstWordsV, color: '#e5a54b' },
-        { label: 'ChatGPT 28d avg', data: asstWords28, color: '#e5a54b', dashed: true },
-      ], { tooltipSuffix: ' words' }));
-
-      // Chart 5: Response Ratio
-      chartInstances.push(buildLineChart('chart-response-ratio', cf.dates, [
-        { label: 'Response ratio', data: ratioV, color: '#a07ce0', fill: true, fillColor: 'rgba(160,124,224,0.12)' },
-        { label: '28d avg', data: ratio28, color: '#a07ce0', dashed: true },
-      ], { tooltipSuffix: 'x' }));
-
-      // Chart 6: Code Block Usage
-      chartInstances.push(buildLineChart('chart-code-usage', cf.dates, [
-        { label: '% your msgs with code', data: codePctUserV, color: '#6cb4d9' },
-        { label: 'Your 28d avg', data: codePctUser28, color: '#6cb4d9', dashed: true },
-        { label: '% ChatGPT msgs with code', data: codePctAsstV, color: '#e08a7a' },
-        { label: 'ChatGPT 28d avg', data: codePctAsst28, color: '#e08a7a', dashed: true },
-      ], { tooltipSuffix: '%', yMax: 100 }));
-    }
+    renderUsageCharts(filtered, ds);
+    renderContentCharts();
   }
 
-  // ── Single-select pills (granularity) ──
+  /**
+   * Create a row of single-select pill buttons. Clicking one deactivates all
+   * others and fires the onChange callback with the selected value.
+   * @param {string} containerId - DOM id of the pill bar container
+   * @param {string[]} options - Labels for each pill
+   * @param {string} defaultVal - Initially active pill label
+   * @param {function(string): void} onChange - Callback fired with the selected label
+   */
   function createSinglePills(containerId, options, defaultVal, onChange) {
-    var bar = document.getElementById(containerId);
+    const bar = document.getElementById(containerId);
     options.forEach(function(opt) {
-      var pill = txt('span', opt, 'pill' + (opt === defaultVal ? ' active' : ''));
+      const pill = txt('button', opt, `pill${opt === defaultVal ? ' active' : ''}`);
+      pill.setAttribute('type', 'button');
       pill.addEventListener('click', function() {
         bar.querySelectorAll('.pill').forEach(function(p) { p.classList.remove('active'); });
         pill.classList.add('active');
@@ -372,13 +417,24 @@
     });
   }
 
-  // ── Multi-select pills (years) ──
+  /**
+   * Create a row of multi-select pill buttons with an 'All' toggle.
+   * Clicking individual pills toggles them; if none remain active, 'All'
+   * re-activates automatically. The onChange callback receives the selected labels.
+   * @param {string} containerId - DOM id of the pill bar container
+   * @param {string[]} options - Labels for each pill (first should be 'All')
+   * @param {function(string[]): void} onChange - Callback fired with array of selected labels
+   */
   function createMultiPills(containerId, options, onChange) {
-    var bar = document.getElementById(containerId);
-    var allPill = null;
+    const bar = document.getElementById(containerId);
+    let allPill = null;
 
+    /**
+     * Collect currently active year pill labels (excluding 'All').
+     * @returns {string[]} Array of active year strings
+     */
     function getSelected() {
-      var selected = [];
+      const selected = [];
       bar.querySelectorAll('.pill').forEach(function(p) {
         if (p.classList.contains('active') && p.textContent !== 'All') {
           selected.push(p.textContent);
@@ -387,9 +443,13 @@
       return selected;
     }
 
+    /**
+     * Synchronise the 'All' pill state: activate it when every year pill
+     * is active (or none are), deactivate it otherwise.
+     */
     function syncAllPill() {
-      var yearPills = bar.querySelectorAll('.pill:not([data-all])');
-      var allActive = true;
+      const yearPills = bar.querySelectorAll('.pill:not([data-all])');
+      let allActive = true;
       yearPills.forEach(function(p) { if (!p.classList.contains('active')) allActive = false; });
       if (allActive || getSelected().length === 0) {
         allPill.classList.add('active');
@@ -400,7 +460,8 @@
     }
 
     options.forEach(function(opt) {
-      var pill = txt('span', opt, 'pill active');
+      const pill = txt('button', opt, 'pill active');
+      pill.setAttribute('type', 'button');
       if (opt === 'All') {
         pill.setAttribute('data-all', 'true');
         allPill = pill;
@@ -411,7 +472,7 @@
       } else {
         pill.addEventListener('click', function() {
           pill.classList.toggle('active');
-          var selected = getSelected();
+          const selected = getSelected();
           if (selected.length === 0) {
             allPill.classList.add('active');
             bar.querySelectorAll('.pill:not([data-all])').forEach(function(p) { p.classList.add('active'); });
@@ -431,9 +492,9 @@
     renderCharts();
   });
 
-  var years = ['All'];
+  const years = ['All'];
   if (D.charts && D.charts.dates) {
-    var yearSet = {};
+    const yearSet = {};
     D.charts.dates.forEach(function(d) { yearSet[d.substring(0, 4)] = true; });
     Object.keys(yearSet).sort().forEach(function(y) { years.push(y); });
   }
@@ -448,31 +509,49 @@
   renderCharts();
 
   // ── Top Days Tables ──
-  var TOP_DAYS_LIMIT = 10;
+  const TOP_DAYS_LIMIT = 10;
 
+  /**
+   * Filter table rows to only those whose date field matches a selected year.
+   * Returns all rows when 'All' is selected or the year list is empty.
+   * @param {Object[]} rows - Table data rows
+   * @param {string[]} years - Selected year strings or ['All']
+   * @param {string} dateKey - Property name containing the date string
+   * @returns {Object[]} Filtered rows
+   */
   function filterTableByYear(rows, years, dateKey) {
     if (years.indexOf('All') >= 0 || years.length === 0) return rows;
     return rows.filter(function(r) { return years.indexOf(r[dateKey].substring(0, 4)) >= 0; });
   }
 
+  /**
+   * Render a ranked "top days" table into the given container element.
+   * Clears existing content, builds a table header, and populates rows
+   * filtered by the currently selected years.
+   * @param {string} containerId - DOM id of the table container
+   * @param {string} title - Heading text above the table
+   * @param {Object[]} rows - Source data rows (pre-sorted by rank)
+   * @param {string} valueKey - Property name for the numeric value column
+   * @param {string} valueLabel - Header text for the value column
+   */
   function renderTopTable(containerId, title, rows, valueKey, valueLabel) {
-    var container = document.getElementById(containerId);
+    const container = document.getElementById(containerId);
     clearChildren(container);
     container.appendChild(txt('h3', title));
 
-    var table = document.createElement('table');
-    var thead = document.createElement('thead');
-    var headerRow = document.createElement('tr');
+    const table = document.createElement('table');
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
     headerRow.appendChild(txt('th', '#'));
     headerRow.appendChild(txt('th', 'Date'));
     headerRow.appendChild(txt('th', valueLabel, 'num-col'));
     thead.appendChild(headerRow);
     table.appendChild(thead);
 
-    var tbody = document.createElement('tbody');
-    var filtered = filterTableByYear(rows, selectedYears, 'date').slice(0, TOP_DAYS_LIMIT);
+    const tbody = document.createElement('tbody');
+    const filtered = filterTableByYear(rows, selectedYears, 'date').slice(0, TOP_DAYS_LIMIT);
     filtered.forEach(function(r, i) {
-      var tr = document.createElement('tr');
+      const tr = document.createElement('tr');
       tr.appendChild(txt('td', String(i + 1), 'rank'));
       tr.appendChild(txt('td', r.date, 'date'));
       tr.appendChild(txt('td', r[valueKey].toLocaleString(), 'num'));
@@ -482,8 +561,12 @@
     container.appendChild(table);
   }
 
+  /**
+   * Render both "top days" tables (by chats and by messages).
+   * Skips each table if its source data is empty or missing.
+   */
   function renderTopTables() {
-    var s = D.summary;
+    const s = D.summary;
     if (s.top_days_by_chats && s.top_days_by_chats.length) {
       renderTopTable('top-chats-table', 'Top Days by Chats', s.top_days_by_chats, 'total_chats', 'Chats');
     }

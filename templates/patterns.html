@@ -167,84 +167,78 @@
 {% block scripts %}
 <script>
 (function() {
-  var D = DASHBOARD_DATA;
+  const D = DASHBOARD_DATA;
   if (!D.hourly) return;
 
-  // ── Helpers ──
-  function el(tag, attrs, children) {
-    var e = document.createElement(tag);
-    if (attrs) Object.keys(attrs).forEach(function(k) {
-      if (k === 'className') e.className = attrs[k];
-      else if (k === 'textContent') e.textContent = attrs[k];
-      else e.setAttribute(k, attrs[k]);
-    });
-    if (children) children.forEach(function(c) { if (c) e.appendChild(c); });
-    return e;
-  }
-  function txt(tag, text, cls) {
-    var e = document.createElement(tag);
-    e.textContent = text;
-    if (cls) e.className = cls;
-    return e;
-  }
-  function clearChildren(node) {
-    while (node.firstChild) node.removeChild(node.firstChild);
-  }
-  function formatDate(isoStr) {
-    var d = new Date(isoStr);
-    return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const FULL_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  const HOUR_LABELS = [0, 3, 6, 9, 12, 15, 18, 21];
+
+  /**
+   * Return a CSS colour string for a heatmap cell based on its value.
+   * @param {number} val   - Message count for the cell.
+   * @param {number} maxVal - Maximum count across all cells (used for ratio).
+   * @returns {string} CSS colour value.
+   */
+  function cellColor(val, maxVal) {
+    if (val === 0 || maxVal === 0) return 'var(--surface2)';
+    const ratio = val / maxVal;
+    if (ratio < 0.25) return 'rgba(229, 165, 75, 0.2)';
+    if (ratio < 0.50) return 'rgba(229, 165, 75, 0.5)';
+    if (ratio < 0.75) return 'rgba(229, 165, 75, 0.8)';
+    return 'var(--amber)';
   }
 
-  var DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  var HOUR_LABELS = [0, 3, 6, 9, 12, 15, 18, 21];
+  /**
+   * Build the 7x24 activity heatmap grid with hour labels, tooltip
+   * interactions, and ARIA attributes for accessibility.
+   * Reads from D.hourly.heatmap (7 arrays of 24 integers).
+   */
+  function buildHeatmap() {
+    const heatmap = D.hourly.heatmap;
+    if (!heatmap || heatmap.length !== 7) return;
 
-  // ── 1. Activity Heatmap ──
-  var heatmap = D.hourly.heatmap;
-  if (heatmap && heatmap.length === 7) {
-    var container = document.getElementById('heatmap-container');
-    var tooltip = document.getElementById('heatmap-tooltip');
+    const container = document.getElementById('heatmap-container');
+    const tooltip = document.getElementById('heatmap-tooltip');
 
     // Find max value for intensity scaling
-    var maxVal = 0;
-    for (var d = 0; d < 7; d++) {
-      for (var h = 0; h < 24; h++) {
+    let maxVal = 0;
+    for (let d = 0; d < 7; d++) {
+      for (let h = 0; h < 24; h++) {
         if (heatmap[d][h] > maxVal) maxVal = heatmap[d][h];
       }
     }
 
-    function cellColor(val) {
-      if (val === 0) return 'var(--surface2)';
-      if (maxVal === 0) return 'var(--surface2)';
-      var ratio = val / maxVal;
-      if (ratio < 0.25) return 'rgba(229, 165, 75, 0.2)';
-      if (ratio < 0.50) return 'rgba(229, 165, 75, 0.5)';
-      if (ratio < 0.75) return 'rgba(229, 165, 75, 0.8)';
-      return 'var(--amber)';
-    }
-
     // Hour labels row
-    var hourRow = el('div', { className: 'heatmap-hour-labels' });
+    const hourRow = el('div', { className: 'heatmap-hour-labels' });
     hourRow.appendChild(el('div')); // empty spacer for row label column
-    for (var h = 0; h < 24; h++) {
-      var lbl = el('div', { className: 'heatmap-hour-label' });
+    for (let h = 0; h < 24; h++) {
+      const lbl = el('div', { className: 'heatmap-hour-label' });
       if (HOUR_LABELS.indexOf(h) >= 0) lbl.textContent = String(h);
       hourRow.appendChild(lbl);
     }
     container.appendChild(hourRow);
 
     // Grid rows
-    var grid = el('div', { className: 'heatmap' });
-    for (var d = 0; d < 7; d++) {
+    const grid = el('div', { className: 'heatmap' });
+    grid.setAttribute('role', 'grid');
+    grid.setAttribute('aria-label', 'Activity heatmap showing messages by day and hour');
+    for (let d = 0; d < 7; d++) {
       // Row label
-      grid.appendChild(el('div', { className: 'heatmap-label', textContent: DAYS[d] }));
+      const rowLabel = el('div', { className: 'heatmap-label', textContent: DAYS[d] });
+      rowLabel.setAttribute('role', 'row');
+      grid.appendChild(rowLabel);
       // Cells
-      for (var h = 0; h < 24; h++) {
-        var val = heatmap[d][h];
-        var cell = el('div', { className: 'heatmap-cell' });
-        cell.style.backgroundColor = cellColor(val);
+      for (let h = 0; h < 24; h++) {
+        const val = heatmap[d][h];
+        const cell = el('div', { className: 'heatmap-cell' });
+        cell.style.backgroundColor = cellColor(val, maxVal);
         cell.setAttribute('data-day', DAYS[d]);
         cell.setAttribute('data-hour', String(h));
         cell.setAttribute('data-count', String(val));
+        cell.setAttribute('role', 'gridcell');
+        const hourStr = `${h < 10 ? '0' : ''}${h}:00`;
+        cell.setAttribute('aria-label', `${FULL_DAYS[d]} ${hourStr} \u2014 ${val} messages`);
         grid.appendChild(cell);
       }
     }
@@ -252,19 +246,19 @@
 
     // Tooltip on hover
     grid.addEventListener('mouseover', function(e) {
-      var cell = e.target;
+      const cell = e.target;
       if (!cell.classList.contains('heatmap-cell')) return;
-      var day = cell.getAttribute('data-day');
-      var hour = cell.getAttribute('data-hour');
-      var count = cell.getAttribute('data-count');
-      var hourNum = parseInt(hour, 10);
-      var label = (hourNum < 10 ? '0' : '') + hourNum + ':00';
-      tooltip.textContent = day + ' ' + label + ' — ' + parseInt(count, 10).toLocaleString() + ' msgs';
+      const day = cell.getAttribute('data-day');
+      const hour = cell.getAttribute('data-hour');
+      const count = cell.getAttribute('data-count');
+      const hourNum = parseInt(hour, 10);
+      const label = `${hourNum < 10 ? '0' : ''}${hourNum}:00`;
+      tooltip.textContent = `${day} ${label} \u2014 ${parseInt(count, 10).toLocaleString()} msgs`;
       tooltip.style.display = 'block';
     });
     grid.addEventListener('mousemove', function(e) {
-      tooltip.style.left = (e.clientX + 12) + 'px';
-      tooltip.style.top = (e.clientY - 30) + 'px';
+      tooltip.style.left = `${e.clientX + 12}px`;
+      tooltip.style.top = `${e.clientY - 30}px`;
     });
     grid.addEventListener('mouseout', function(e) {
       if (!e.target.classList.contains('heatmap-cell')) return;
@@ -272,18 +266,86 @@
     });
   }
 
-  // ── 2. Hourly Bar Chart ──
-  Chart.defaults.color = '#8a877e';
-  Chart.defaults.borderColor = '#2a2d3a';
-  Chart.defaults.font.family = "'DM Sans', sans-serif";
-  Chart.defaults.font.size = 11;
+  /**
+   * Build the weekday-vs-weekend comparison cards showing totals,
+   * averages, per-day bar charts, and the weekday/weekend ratio.
+   * Reads from D.hourly.weekday_totals (array of 7 integers, Mon-Sun).
+   */
+  function buildWeekdayCards() {
+    const weekdayTotals = D.hourly.weekday_totals;
+    if (!weekdayTotals || weekdayTotals.length !== 7) return;
 
-  var hourlyTotals = D.hourly.hourly_totals;
-  if (hourlyTotals && hourlyTotals.length === 24) {
-    var labels = [];
-    for (var i = 0; i < 24; i++) labels.push(String(i) + ':00');
+    const compContainer = document.getElementById('weekday-comparison');
 
-    var ctx = document.getElementById('chart-hourly').getContext('2d');
+    let weekdaySum = 0;
+    let weekendSum = 0;
+    let maxDay = 0;
+    for (let i = 0; i < 7; i++) {
+      if (i < 5) weekdaySum += weekdayTotals[i];
+      else weekendSum += weekdayTotals[i];
+      if (weekdayTotals[i] > maxDay) maxDay = weekdayTotals[i];
+    }
+    const totalAll = weekdaySum + weekendSum;
+    const weekdayAvg = Math.round(weekdaySum / 5);
+    const weekendAvg = Math.round(weekendSum / 2);
+    const ratio = weekendAvg > 0 ? (weekdayAvg / weekendAvg).toFixed(2) : '\u2014';
+
+    /**
+     * Create a stat card with header, big number, subtitle lines, and
+     * per-day bar rows for the given day range.
+     * @param {string} title    - Card heading text.
+     * @param {number} sum      - Total messages for the group.
+     * @param {number} avg      - Average messages per day.
+     * @param {number} startIdx - First index in weekdayTotals (inclusive).
+     * @param {number} endIdx   - Last index in weekdayTotals (exclusive).
+     * @param {string} colour   - CSS variable for the accent colour.
+     * @returns {HTMLElement} The complete card element.
+     */
+    function createCard(title, sum, avg, startIdx, endIdx, colour) {
+      const card = el('div', { className: 'weekday-stat-card' });
+      card.appendChild(txt('h3', title));
+      const big = txt('div', sum.toLocaleString(), 'weekday-stat-big');
+      big.style.color = `var(--${colour})`;
+      card.appendChild(big);
+      card.appendChild(txt('div', `total messages \u00b7 ${avg.toLocaleString()}/day avg`, 'weekday-stat-sub'));
+      card.appendChild(txt('div', `${Math.round(sum / totalAll * 100)}% of all messages`, 'weekday-stat-sub'));
+
+      for (let i = startIdx; i < endIdx; i++) {
+        const row = el('div', { className: 'weekday-bar-row' });
+        row.appendChild(txt('span', DAYS[i], 'weekday-bar-label'));
+        const track = el('div', { className: 'weekday-bar-track' });
+        const fill = el('div', { className: 'weekday-bar-fill' });
+        fill.style.width = `${maxDay > 0 ? (weekdayTotals[i] / maxDay * 100) : 0}%`;
+        fill.style.background = `var(--${colour})`;
+        track.appendChild(fill);
+        row.appendChild(track);
+        row.appendChild(txt('span', weekdayTotals[i].toLocaleString(), 'weekday-bar-value'));
+        card.appendChild(row);
+      }
+      return card;
+    }
+
+    compContainer.appendChild(createCard('Weekdays (Mon\u2013Fri)', weekdaySum, weekdayAvg, 0, 5, 'skyblue'));
+
+    const weCard = createCard('Weekends (Sat\u2013Sun)', weekendSum, weekendAvg, 5, 7, 'amber');
+    const ratioNote = txt('div', `Weekday/weekend ratio: ${ratio}x`, 'weekday-stat-sub');
+    ratioNote.style.marginTop = '12px';
+    weCard.appendChild(ratioNote);
+    compContainer.appendChild(weCard);
+  }
+
+  /**
+   * Build the hourly distribution horizontal bar chart.
+   * Reads from D.hourly.hourly_totals (array of 24 integers).
+   */
+  function buildHourlyChart() {
+    const hourlyTotals = D.hourly.hourly_totals;
+    if (!hourlyTotals || hourlyTotals.length !== 24) return;
+
+    const labels = [];
+    for (let i = 0; i < 24; i++) labels.push(`${i}:00`);
+
+    const ctx = document.getElementById('chart-hourly').getContext('2d');
     new Chart(ctx, {
       type: 'bar',
       data: {
@@ -310,7 +372,7 @@
             bodyFont: { size: 12 },
             padding: 10,
             callbacks: {
-              label: function(ctx) { return ctx.parsed.x.toLocaleString() + ' messages'; }
+              label: function(c) { return `${c.parsed.x.toLocaleString()} messages`; }
             },
           },
         },
@@ -322,173 +384,116 @@
     });
   }
 
-  // ── 3. Weekday vs Weekend ──
-  var weekdayTotals = D.hourly.weekday_totals;
-  if (weekdayTotals && weekdayTotals.length === 7) {
-    var compContainer = document.getElementById('weekday-comparison');
+  /**
+   * Build the code languages horizontal bar chart and summary line.
+   * Reads from D.code_stats (object with language_counts array).
+   */
+  function buildCodeLanguagesChart() {
+    const codeStats = D.code_stats;
+    if (codeStats && codeStats.language_counts && codeStats.language_counts.length) {
+      const statLine = document.getElementById('code-stat-line');
+      statLine.textContent = `${codeStats.pct_with_code}% of conversations include code blocks (${codeStats.total_conversations_with_code.toLocaleString()} conversations)`;
 
-    var weekdaySum = 0;
-    var weekendSum = 0;
-    var maxDay = 0;
-    for (var i = 0; i < 7; i++) {
-      if (i < 5) weekdaySum += weekdayTotals[i];
-      else weekendSum += weekdayTotals[i];
-      if (weekdayTotals[i] > maxDay) maxDay = weekdayTotals[i];
-    }
-    var totalAll = weekdaySum + weekendSum;
-    var weekdayAvg = Math.round(weekdaySum / 5);
-    var weekendAvg = Math.round(weekendSum / 2);
-    var ratio = weekendAvg > 0 ? (weekdayAvg / weekendAvg).toFixed(2) : '\u2014';
+      const top10 = codeStats.language_counts.slice(0, 10);
+      const langLabels = top10.map(function(l) { return l.language; });
+      const langCounts = top10.map(function(l) { return l.count; });
 
-    // Weekday card
-    var wdCard = el('div', { className: 'weekday-stat-card' });
-    wdCard.appendChild(txt('h3', 'Weekdays (Mon\u2013Fri)'));
-    var wdBig = txt('div', weekdaySum.toLocaleString(), 'weekday-stat-big');
-    wdBig.style.color = 'var(--skyblue)';
-    wdCard.appendChild(wdBig);
-    wdCard.appendChild(txt('div', 'total messages \u00b7 ' + weekdayAvg.toLocaleString() + '/day avg', 'weekday-stat-sub'));
-    wdCard.appendChild(txt('div', Math.round(weekdaySum / totalAll * 100) + '% of all messages', 'weekday-stat-sub'));
-
-    // Day bars for weekday
-    for (var i = 0; i < 5; i++) {
-      var row = el('div', { className: 'weekday-bar-row' });
-      row.appendChild(txt('span', DAYS[i], 'weekday-bar-label'));
-      var track = el('div', { className: 'weekday-bar-track' });
-      var fill = el('div', { className: 'weekday-bar-fill' });
-      fill.style.width = (maxDay > 0 ? (weekdayTotals[i] / maxDay * 100) : 0) + '%';
-      fill.style.background = 'var(--skyblue)';
-      track.appendChild(fill);
-      row.appendChild(track);
-      row.appendChild(txt('span', weekdayTotals[i].toLocaleString(), 'weekday-bar-value'));
-      wdCard.appendChild(row);
-    }
-    compContainer.appendChild(wdCard);
-
-    // Weekend card
-    var weCard = el('div', { className: 'weekday-stat-card' });
-    weCard.appendChild(txt('h3', 'Weekends (Sat\u2013Sun)'));
-    var weBig = txt('div', weekendSum.toLocaleString(), 'weekday-stat-big');
-    weBig.style.color = 'var(--amber)';
-    weCard.appendChild(weBig);
-    weCard.appendChild(txt('div', 'total messages \u00b7 ' + weekendAvg.toLocaleString() + '/day avg', 'weekday-stat-sub'));
-    weCard.appendChild(txt('div', Math.round(weekendSum / totalAll * 100) + '% of all messages', 'weekday-stat-sub'));
-
-    // Day bars for weekend
-    for (var i = 5; i < 7; i++) {
-      var row = el('div', { className: 'weekday-bar-row' });
-      row.appendChild(txt('span', DAYS[i], 'weekday-bar-label'));
-      var track = el('div', { className: 'weekday-bar-track' });
-      var fill = el('div', { className: 'weekday-bar-fill' });
-      fill.style.width = (maxDay > 0 ? (weekdayTotals[i] / maxDay * 100) : 0) + '%';
-      fill.style.background = 'var(--amber)';
-      track.appendChild(fill);
-      row.appendChild(track);
-      row.appendChild(txt('span', weekdayTotals[i].toLocaleString(), 'weekday-bar-value'));
-      weCard.appendChild(row);
-    }
-
-    // Ratio note
-    var ratioNote = txt('div', 'Weekday/weekend ratio: ' + ratio + 'x', 'weekday-stat-sub');
-    ratioNote.style.marginTop = '12px';
-    weCard.appendChild(ratioNote);
-    compContainer.appendChild(weCard);
-  }
-
-  // ── 4. Code Languages Chart ──
-  var codeStats = D.code_stats;
-  if (codeStats && codeStats.language_counts && codeStats.language_counts.length) {
-    var statLine = document.getElementById('code-stat-line');
-    statLine.textContent = codeStats.pct_with_code + '% of conversations include code blocks (' + codeStats.total_conversations_with_code.toLocaleString() + ' conversations)';
-
-    var top10 = codeStats.language_counts.slice(0, 10);
-    var langLabels = top10.map(function(l) { return l.language; });
-    var langCounts = top10.map(function(l) { return l.count; });
-
-    var langCtx = document.getElementById('chart-code-languages').getContext('2d');
-    new Chart(langCtx, {
-      type: 'bar',
-      data: {
-        labels: langLabels,
-        datasets: [{
-          label: 'Conversations',
-          data: langCounts,
-          backgroundColor: 'rgba(229,165,75,0.7)',
-          borderWidth: 0,
-          barPercentage: 0.7,
-          categoryPercentage: 0.85,
-        }],
-      },
-      options: {
-        indexAxis: 'y',
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            backgroundColor: '#1e2029', borderColor: '#2a2d3a', borderWidth: 1,
-            bodyFont: { size: 12 }, padding: 10,
-            callbacks: {
-              label: function(ctx) { return ctx.parsed.x.toLocaleString() + ' conversations'; }
+      const langCtx = document.getElementById('chart-code-languages').getContext('2d');
+      new Chart(langCtx, {
+        type: 'bar',
+        data: {
+          labels: langLabels,
+          datasets: [{
+            label: 'Conversations',
+            data: langCounts,
+            backgroundColor: 'rgba(229,165,75,0.7)',
+            borderWidth: 0,
+            barPercentage: 0.7,
+            categoryPercentage: 0.85,
+          }],
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: '#1e2029', borderColor: '#2a2d3a', borderWidth: 1,
+              bodyFont: { size: 12 }, padding: 10,
+              callbacks: {
+                label: function(c) { return `${c.parsed.x.toLocaleString()} conversations`; }
+              },
             },
           },
+          scales: {
+            x: { beginAtZero: true, grid: { color: '#1e2029' }, ticks: { precision: 0 } },
+            y: { grid: { display: false }, ticks: { font: { family: "'JetBrains Mono', monospace", size: 11 } } },
+          },
         },
-        scales: {
-          x: { beginAtZero: true, grid: { color: '#1e2029' }, ticks: { precision: 0 } },
-          y: { grid: { display: false }, ticks: { font: { family: "'JetBrains Mono', monospace", size: 11 } } },
-        },
-      },
-    });
-  } else {
-    var statLine = document.getElementById('code-stat-line');
-    if (statLine) statLine.textContent = 'No code blocks detected in conversations.';
+      });
+    } else {
+      const statLine = document.getElementById('code-stat-line');
+      if (statLine) statLine.textContent = 'No code blocks detected in conversations.';
+    }
   }
 
-  // ── 5. Activity Overview Table ──
-  var activityData = D.activity_by_year;
-  if (activityData && activityData.length) {
-    var actEl = document.getElementById('activity-table');
-    var tbl = document.createElement('table');
-    var th = document.createElement('thead');
-    var hr = document.createElement('tr');
+  /**
+   * Build the activity-by-year overview table.
+   * Reads from D.activity_by_year (array of year summary objects).
+   */
+  function buildActivityTable() {
+    const activityData = D.activity_by_year;
+    if (!activityData || !activityData.length) return;
+
+    const actEl = document.getElementById('activity-table');
+    const tbl = document.createElement('table');
+    const th = document.createElement('thead');
+    const hr = document.createElement('tr');
     ['Year', 'Total Days', 'Active', '% Active', 'Inactive', '% Inactive'].forEach(function(h) {
-      var cell = txt('th', h);
+      const cell = txt('th', h);
       if (h !== 'Year') cell.className = 'num-col';
       hr.appendChild(cell);
     });
     th.appendChild(hr);
     tbl.appendChild(th);
 
-    var tb = document.createElement('tbody');
+    const tb = document.createElement('tbody');
     activityData.forEach(function(row) {
-      var tr = document.createElement('tr');
-      var isOverall = row.year === 'Overall';
+      const tr = document.createElement('tr');
+      const isOverall = row.year === 'Overall';
       if (isOverall) tr.style.fontWeight = '700';
 
-      var yearTd = txt('td', row.year);
+      const yearTd = txt('td', row.year);
       if (isOverall) yearTd.style.color = 'var(--amber)';
       tr.appendChild(yearTd);
       tr.appendChild(txt('td', row.total_days.toLocaleString(), 'num'));
       tr.appendChild(txt('td', row.days_active.toLocaleString(), 'num'));
-      tr.appendChild(txt('td', row.pct_active.toFixed(1) + '%', 'num'));
+      tr.appendChild(txt('td', `${row.pct_active.toFixed(1)}%`, 'num'));
       tr.appendChild(txt('td', row.days_inactive.toLocaleString(), 'num'));
-      tr.appendChild(txt('td', row.pct_inactive.toFixed(1) + '%', 'num'));
+      tr.appendChild(txt('td', `${row.pct_inactive.toFixed(1)}%`, 'num'));
       tb.appendChild(tr);
     });
     tbl.appendChild(tb);
     actEl.appendChild(tbl);
   }
 
-  // ── 6. Gap Analysis Table ──
-  var gs = D.gap_stats || {};
-  var gapsEl = document.getElementById('gaps-table');
-  var TOP_GAPS_LIMIT = 20;
-  var selectedGapYears = ['All'];
+  /**
+   * Build the gap analysis table with year-filter pill bar and
+   * re-renderable rows. Reads from D.gaps and D.gap_stats.
+   */
+  function buildGapTable() {
+    const gs = D.gap_stats || {};
+    const gapsEl = document.getElementById('gaps-table');
+    const TOP_GAPS_LIMIT = 20;
+    let selectedGapYears = ['All'];
 
-  if (D.gaps && D.gaps.length) {
-    var titleEl = txt('h3', 'Longest Gaps');
+    if (!D.gaps || !D.gaps.length) return;
+
+    const titleEl = txt('h3', 'Longest Gaps');
     if (gs.proportion_inactive) {
-      var pctSpan = document.createElement('span');
-      pctSpan.textContent = ' (' + gs.proportion_inactive.toFixed(1) + '% of days inactive)';
+      const pctSpan = document.createElement('span');
+      pctSpan.textContent = ` (${gs.proportion_inactive.toFixed(1)}% of days inactive)`;
       pctSpan.style.fontWeight = '400';
       pctSpan.style.color = 'var(--text-dim)';
       pctSpan.style.fontSize = '12px';
@@ -497,17 +502,21 @@
     gapsEl.appendChild(titleEl);
 
     // Auto-detect years from gap data
-    var gapYearSet = {};
+    const gapYearSet = {};
     D.gaps.forEach(function(g) { gapYearSet[g.start_timestamp.substring(0, 4)] = true; });
-    var gapYears = ['All'];
+    const gapYears = ['All'];
     Object.keys(gapYearSet).sort().forEach(function(y) { gapYears.push(y); });
 
     // Pill bar (multi-select)
-    var pillBar = el('div', { className: 'pill-bar' });
-    var allGapPill = null;
+    const pillBar = el('div', { className: 'pill-bar' });
+    let allGapPill = null;
 
+    /**
+     * Collect text content of all active year pills (excluding "All").
+     * @returns {string[]} Array of active year strings.
+     */
     function getSelectedGapYears() {
-      var selected = [];
+      const selected = [];
       pillBar.querySelectorAll('.pill').forEach(function(p) {
         if (p.classList.contains('active') && p.textContent !== 'All') {
           selected.push(p.textContent);
@@ -516,9 +525,13 @@
       return selected;
     }
 
+    /**
+     * Synchronise the "All" pill state: activate it when every year
+     * pill is active or none are; deactivate it otherwise.
+     */
     function syncGapAllPill() {
-      var yearPills = pillBar.querySelectorAll('.pill:not([data-all])');
-      var allActive = true;
+      const yearPills = pillBar.querySelectorAll('.pill:not([data-all])');
+      let allActive = true;
       yearPills.forEach(function(p) { if (!p.classList.contains('active')) allActive = false; });
       if (allActive || getSelectedGapYears().length === 0) {
         allGapPill.classList.add('active');
@@ -529,7 +542,8 @@
     }
 
     gapYears.forEach(function(yr) {
-      var pill = txt('span', yr, 'pill active');
+      const pill = txt('button', yr, 'pill active');
+      pill.type = 'button';
       if (yr === 'All') {
         pill.setAttribute('data-all', 'true');
         allGapPill = pill;
@@ -541,7 +555,7 @@
       } else {
         pill.addEventListener('click', function() {
           pill.classList.toggle('active');
-          var selected = getSelectedGapYears();
+          const selected = getSelectedGapYears();
           if (selected.length === 0) {
             allGapPill.classList.add('active');
             pillBar.querySelectorAll('.pill:not([data-all])').forEach(function(p) { p.classList.add('active'); });
@@ -557,9 +571,9 @@
     });
     gapsEl.appendChild(pillBar);
 
-    var table = document.createElement('table');
-    var thead = document.createElement('thead');
-    var headerRow = document.createElement('tr');
+    const table = document.createElement('table');
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
     headerRow.appendChild(txt('th', '#'));
     headerRow.appendChild(txt('th', 'Start'));
     headerRow.appendChild(txt('th', 'End'));
@@ -567,10 +581,17 @@
     thead.appendChild(headerRow);
     table.appendChild(thead);
 
-    var gapTbody = document.createElement('tbody');
+    const gapTbody = document.createElement('tbody');
     table.appendChild(gapTbody);
     gapsEl.appendChild(table);
 
+    /**
+     * Filter gap entries to only those whose start year is in the
+     * selected set. Returns all gaps when "All" is selected.
+     * @param {Object[]} gaps  - Full array of gap objects.
+     * @param {string[]} years - Selected year strings (or ['All']).
+     * @returns {Object[]} Filtered gap array.
+     */
     function filterGapsByYear(gaps, years) {
       if (years.indexOf('All') >= 0 || years.length === 0) return gaps;
       return gaps.filter(function(g) {
@@ -578,11 +599,15 @@
       });
     }
 
+    /**
+     * Clear and re-render the gap table body based on the current
+     * year filter selection, limited to TOP_GAPS_LIMIT rows.
+     */
     function renderGapRows() {
       clearChildren(gapTbody);
-      var filtered = filterGapsByYear(D.gaps, selectedGapYears).slice(0, TOP_GAPS_LIMIT);
+      const filtered = filterGapsByYear(D.gaps, selectedGapYears).slice(0, TOP_GAPS_LIMIT);
       filtered.forEach(function(g, i) {
-        var tr = document.createElement('tr');
+        const tr = document.createElement('tr');
         tr.appendChild(txt('td', String(i + 1), 'rank'));
         tr.appendChild(txt('td', formatDate(g.start_timestamp), 'date'));
         tr.appendChild(txt('td', formatDate(g.end_timestamp)));
@@ -593,6 +618,25 @@
 
     renderGapRows();
   }
+
+  // ── 1. Activity Heatmap ──
+  buildHeatmap();
+
+  // ── 2. Hourly Bar Chart ──
+  applyChartDefaults();
+  buildHourlyChart();
+
+  // ── 3. Weekday vs Weekend ──
+  buildWeekdayCards();
+
+  // ── 4. Code Languages Chart ──
+  buildCodeLanguagesChart();
+
+  // ── 5. Activity Overview Table ──
+  buildActivityTable();
+
+  // ── 6. Gap Analysis Table ──
+  buildGapTable();
 
 })();
 </script>

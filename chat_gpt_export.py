@@ -5,27 +5,39 @@ from both the user and ChatGPT. The script runs in interactive mode by default,
 allowing users to select which conversations to include.
 """
 
+from __future__ import annotations
+
 import json
 from datetime import datetime
 import os
 import re
 import sys
 
-def clean_text(text):
-    """Remove markdown and excessive whitespace from text."""
+def clean_text(text: str) -> str:
+    """Remove markdown and excessive whitespace from text.
+
+    Args:
+        text: Raw text content potentially containing markdown formatting
+            and excessive whitespace.
+
+    Returns:
+        Cleaned text with multiple consecutive newlines reduced to double
+        newlines and leading/trailing whitespace stripped.
+    """
     # Simple cleanup - more sophisticated markdown parsing could be added
     text = re.sub(r'\n{3,}', '\n\n', text)  # Reduce multiple newlines
     return text.strip()
 
-def format_timestamp(timestamp):
-    """
-    Convert Unix timestamp to readable date/time format.
-    
+def format_timestamp(timestamp: float | int | None) -> str:
+    """Convert Unix timestamp to readable date/time format.
+
     Args:
-        timestamp: Unix timestamp (integer or float)
-        
+        timestamp: Unix timestamp (integer or float), or None if unavailable.
+
     Returns:
-        str: Formatted date/time string or 'Unknown time' if timestamp is None
+        Formatted date/time string in 'YYYY-MM-DD HH:MM:SS' format,
+        'Unknown time' if timestamp is None, or 'Invalid timestamp' if
+        conversion fails.
     """
     if timestamp is None:
         return "Unknown time"
@@ -35,10 +47,22 @@ def format_timestamp(timestamp):
     except (ValueError, TypeError, OSError):
         return "Invalid timestamp"
 
-def get_message_timestamp(message_item):
-    """
-    Safely extract timestamp from a message item.
-    Returns 0 if the timestamp can't be found to ensure sorting still works.
+def get_message_timestamp(message_item: tuple) -> int:
+    """Safely extract timestamp from a message item.
+
+    Designed as a sort key function for ordering conversation mapping items
+    by creation time. Returns 0 for any items where the timestamp cannot be
+    extracted, ensuring sorting still works without raising exceptions.
+
+    Args:
+        message_item: A tuple of (message_id, message_data) from a
+            conversation's mapping dictionary. message_data is expected
+            to be a dict containing a nested 'message' dict with a
+            'create_time' field.
+
+    Returns:
+        The integer creation timestamp extracted from the message item,
+        or 0 if the timestamp cannot be found or parsed.
     """
     try:
         # Check if message_item is valid
@@ -66,15 +90,17 @@ def get_message_timestamp(message_item):
         # If anything goes wrong, return 0 to allow sorting to continue
         return 0
 
-def get_first_user_message(messages):
-    """
-    Find the first user message in a conversation.
-    
+def get_first_user_message(messages: list[dict]) -> str:
+    """Find the first user message in a conversation.
+
     Args:
-        messages: List of message dictionaries
-        
+        messages: List of message dictionaries, each containing at least
+            'role' and 'content' keys.
+
     Returns:
-        str: The first user message or a default message if none found
+        The content of the first message with role 'user', truncated to
+        200 characters with an ellipsis if longer, or '[No user message
+        found]' if no user messages exist.
     """
     for msg in messages:
         if msg.get('role', '').lower() == 'user':
@@ -86,16 +112,17 @@ def get_first_user_message(messages):
     
     return "[No user message found]"
 
-def preview_conversation(convo, index):
-    """
-    Create a preview of a conversation for selection.
-    
+def preview_conversation(convo: dict, index: int) -> str:
+    """Create a preview of a conversation for selection.
+
     Args:
-        convo: Conversation dictionary
-        index: Numeric index of the conversation
-        
+        convo: Conversation dictionary containing 'title', 'create_time',
+            and 'messages' keys.
+        index: Numeric index of the conversation for display labeling.
+
     Returns:
-        str: A formatted preview string
+        A formatted multi-line preview string showing the conversation
+        index, title, creation date, and first user message.
     """
     title = convo.get('title', 'Untitled Conversation')
     date = format_timestamp(convo.get('create_time'))
@@ -106,18 +133,28 @@ def preview_conversation(convo, index):
     
     return preview
 
-def get_valid_number_input(prompt, default_value, min_value=1, max_value=None):
-    """
-    Get a valid number input from the user.
-    
+def get_valid_number_input(
+    prompt: str,
+    default_value: int,
+    min_value: int = 1,
+    max_value: int | None = None,
+) -> int:
+    """Get a valid number input from the user.
+
+    Repeatedly prompts until a valid integer within the specified range
+    is entered, or the user accepts the default by pressing Enter.
+
     Args:
-        prompt: The prompt to show to the user
-        default_value: The default value to use if input is empty
-        min_value: The minimum allowed value
-        max_value: The maximum allowed value (optional)
-        
+        prompt: The prompt string to display to the user.
+        default_value: The default value returned if the user enters
+            an empty string.
+        min_value: The minimum allowed value (inclusive).
+        max_value: The maximum allowed value (inclusive), or None for
+            no upper bound.
+
     Returns:
-        int: The validated number input
+        The validated integer input from the user, or the default value
+        if no input was provided.
     """
     while True:
         try:
@@ -144,136 +181,110 @@ def get_valid_number_input(prompt, default_value, min_value=1, max_value=None):
         except ValueError:
             print("Please enter a valid number.")
 
-def export_conversations(json_file, output_file):
-    """
-    Export selected conversations from ChatGPT history.
-    
+def _load_and_parse_conversations(json_file: str) -> list[dict]:
+    """Load a ChatGPT export JSON and parse into structured conversation dicts.
+
     Args:
-        json_file (str): Path to the ChatGPT conversation history JSON file
-        output_file (str): Path to save the formatted output
+        json_file: Path to the ChatGPT conversation history JSON file.
+
+    Returns:
+        List of parsed conversation dicts sorted newest-first, each containing
+        'title', 'create_time', and 'messages' keys. Empty list on error.
     """
-    print(f"Loading conversation history from {json_file}...")
-    
     try:
         with open(json_file, 'r', encoding='utf-8') as f:
             chat_history = json.load(f)
     except FileNotFoundError:
         print(f"Error: File '{json_file}' not found.")
-        return 0
+        return []
     except json.JSONDecodeError:
         print(f"Error: '{json_file}' is not a valid JSON file.")
-        return 0
-    
-    # Extract conversations with their timestamps
+        return []
+
     conversations = []
-    
     for chat in chat_history:
         try:
-            # Get chat title
             title = chat.get('title', 'Untitled Conversation')
-            
-            # Find the create time of the first message to sort by recency
-            create_time = None
-            messages = []
-            
-            # Check if mapping exists and is a dictionary
             if 'mapping' not in chat or not isinstance(chat['mapping'], dict):
                 continue
-            
-            # Get all mapping items first, then try to sort them
+
             mapping_items = list(chat['mapping'].items())
-            
-            # Sort manually to avoid comparison errors
             try:
-                # Try to sort the mapping items
                 sorted_items = sorted(mapping_items, key=get_message_timestamp)
             except (TypeError, ValueError):
-                # If sorting fails, just use them in the original order
                 sorted_items = mapping_items
-            
+
+            create_time = None
+            messages = []
             for message_id, message_data in sorted_items:
                 if not message_data:
                     continue
-                    
                 message = message_data.get('message')
-                
-                if message:
-                    author = message.get('author', {})
-                    if author:
-                        role = author.get('role')
-                        # Skip system messages
-                        if role and role.lower() == 'system':
-                            continue
-                            
-                        timestamp = message.get('create_time')
-                        
-                        # Track the earliest timestamp for sorting
-                        if create_time is None and timestamp:
-                            create_time = timestamp
-                        
-                        # Get message content
-                        content_parts = message.get('content', {}).get('parts', [])
-                        if content_parts:
-                            # Ensure all parts are strings
-                            content = ' '.join(str(part) for part in content_parts)
-                            
-                            # Add to messages list
-                            messages.append({
-                                'role': role or 'unknown',
-                                'timestamp': timestamp,  # Keep None if it's None
-                                'content': clean_text(content)
-                            })
-            
-            # Only add conversations with messages
+                if not message:
+                    continue
+                author = message.get('author', {})
+                if not author:
+                    continue
+                role = author.get('role')
+                if role and role.lower() == 'system':
+                    continue
+                timestamp = message.get('create_time')
+                if create_time is None and timestamp:
+                    create_time = timestamp
+                content_parts = message.get('content', {}).get('parts', [])
+                if content_parts:
+                    content = ' '.join(str(part) for part in content_parts)
+                    messages.append({
+                        'role': role or 'unknown',
+                        'timestamp': timestamp,
+                        'content': clean_text(content),
+                    })
+
             if messages:
                 conversations.append({
                     'title': title,
-                    'create_time': create_time or 0,  # Use 0 if None for sorting
-                    'messages': messages
+                    'create_time': create_time or 0,
+                    'messages': messages,
                 })
         except Exception as e:
             print(f"Error processing a conversation: {str(e)}")
             continue
-    
-    if not conversations:
-        print("No conversations found or could be processed.")
-        return 0
-    
-    # Sort conversations by create_time (newest first)
-    # Use a custom key function that safely handles None values
-    def safe_sort_key(convo):
+
+    def safe_sort_key(convo: dict) -> int:
         try:
             return int(convo.get('create_time', 0) or 0)
         except (TypeError, ValueError):
             return 0
-    
+
     conversations.sort(key=safe_sort_key, reverse=True)
-    
-    # Ask user how many recent conversations to preview
-    total_conversations = len(conversations)
-    print(f"\nFound {total_conversations} conversations in total.")
-    
-    preview_limit = get_valid_number_input(
-        f"How many recent conversations would you like to preview? (1-{total_conversations}) [default: 10]: ",
-        10,
-        1,
-        total_conversations
-    )
-    
-    # Interactive selection mode
+    return conversations
+
+
+def _select_conversations_interactively(
+    conversations: list[dict],
+    preview_limit: int,
+) -> list[dict]:
+    """Present conversations to the user for interactive selection.
+
+    Args:
+        conversations: Pre-sorted list of conversation dicts.
+        preview_limit: Maximum number of conversations to show.
+
+    Returns:
+        List of user-selected conversation dicts.
+    """
     conversations_to_preview = conversations[:preview_limit]
-    selected_conversations = []
-    
+    selected: list[dict] = []
+
     print(f"\nSelecting conversations to export (showing {len(conversations_to_preview)} most recent):")
     print("-" * 60)
-    
+
     for i, convo in enumerate(conversations_to_preview, 1):
         print(preview_conversation(convo, i))
-        
         while True:
-            choice = input(f"Include this conversation? (y/n): ").strip().lower()
+            choice = input("Include this conversation? (y/n): ").strip().lower()
             if choice in ('y', 'yes'):
-                selected_conversations.append(convo)
+                selected.append(convo)
                 print("Added to export.")
                 break
             elif choice in ('n', 'no'):
@@ -281,69 +292,99 @@ def export_conversations(json_file, output_file):
                 break
             else:
                 print("Please enter 'y' or 'n'.")
-        
         print("-" * 60)
-    
-    if not selected_conversations:
-        print("No conversations were selected for export.")
-        return 0
-    
-    print(f"\nSelected {len(selected_conversations)} out of {len(conversations_to_preview)} conversations.")
-    
-    print(f"Writing {len(selected_conversations)} conversations to {output_file}...")
-    
-    # Create output directory if it doesn't exist
+
+    return selected
+
+
+def _write_export_file(conversations: list[dict], output_file: str) -> None:
+    """Write selected conversations to a formatted text file.
+
+    Args:
+        conversations: List of conversation dicts to export.
+        output_file: Destination file path. Parent dirs created automatically.
+    """
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
-    
-    # Write formatted conversations to file
+
     with open(output_file, 'w', encoding='utf-8') as f:
-        f.write(f"CHATGPT CONVERSATION EXPORT\n")
+        f.write("CHATGPT CONVERSATION EXPORT\n")
         f.write(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write(f"Contains {len(selected_conversations)} selected conversations\n")
+        f.write(f"Contains {len(conversations)} selected conversations\n")
         f.write("=" * 100 + "\n\n")
-        
-        for i, convo in enumerate(selected_conversations, 1):
-            # Write conversation header with more prominent formatting
-            f.write("\n")  # Extra line before conversation
+
+        for i, convo in enumerate(conversations, 1):
+            f.write("\n")
             f.write("+" + "=" * 98 + "+\n")
             f.write(f"|{' CONVERSATION #'+str(i)+': '+convo['title'] :<98}|\n")
             f.write(f"|{' Date: '+format_timestamp(convo['create_time']) :<98}|\n")
             f.write("+" + "=" * 98 + "+\n\n")
-            
-            # Write messages with improved formatting
+
             for msg in convo['messages']:
                 role_str = msg['role'].upper() if msg['role'] else 'UNKNOWN'
                 timestamp_str = format_timestamp(msg['timestamp'])
-                
-                # Different formatting based on role
+
                 if role_str == 'USER':
-                    # User messages - less indentation, bold header
                     f.write(f">>> USER [{timestamp_str}]:\n")
-                    # Indent user messages 4 spaces
-                    content_lines = msg['content'].split('\n')
-                    for line in content_lines:
+                    for line in msg['content'].split('\n'):
                         f.write(f"    {line}\n")
                 elif role_str == 'ASSISTANT':
-                    # ChatGPT messages - more indentation
                     f.write(f"    CHATGPT [{timestamp_str}]:\n")
-                    # Indent ChatGPT responses 8 spaces for better distinction
-                    content_lines = msg['content'].split('\n')
-                    for line in content_lines:
+                    for line in msg['content'].split('\n'):
                         f.write(f"        {line}\n")
                 else:
-                    # Skip if system or unknown
                     continue
-                
-                f.write("\n")  # Add space between messages
-            
-            # Add more prominent separator between conversations
-            f.write("\n" + "*" * 100 + "\n\n")
-    
-    print(f"Export complete! File saved to {output_file}")
-    return len(selected_conversations)
+                f.write("\n")
 
-def print_help():
-    """Print help information about how to use the script."""
+            f.write("\n" + "*" * 100 + "\n\n")
+
+
+def export_conversations(json_file: str, output_file: str) -> int:
+    """Export selected conversations from ChatGPT history.
+
+    Coordinates loading, interactive selection, and writing of conversations.
+
+    Args:
+        json_file: Path to the ChatGPT conversation history JSON file.
+        output_file: Path to save the formatted text output.
+
+    Returns:
+        The number of conversations successfully exported, or 0 on failure.
+    """
+    print(f"Loading conversation history from {json_file}...")
+
+    conversations = _load_and_parse_conversations(json_file)
+    if not conversations:
+        print("No conversations found or could be processed.")
+        return 0
+
+    total = len(conversations)
+    print(f"\nFound {total} conversations in total.")
+
+    preview_limit = get_valid_number_input(
+        f"How many recent conversations would you like to preview? (1-{total}) [default: 10]: ",
+        10, 1, total,
+    )
+
+    selected = _select_conversations_interactively(conversations, preview_limit)
+    if not selected:
+        print("No conversations were selected for export.")
+        return 0
+
+    print(f"\nSelected {len(selected)} out of {min(preview_limit, total)} conversations.")
+    print(f"Writing {len(selected)} conversations to {output_file}...")
+
+    _write_export_file(selected, output_file)
+
+    print(f"Export complete! File saved to {output_file}")
+    return len(selected)
+
+def print_help() -> None:
+    """Print help information about how to use the script.
+
+    Displays usage instructions, argument descriptions, and example
+    commands to stdout. Called when the user passes ``-h``, ``--help``,
+    or ``help`` as a command-line argument.
+    """
     print("ChatGPT Conversation Exporter")
     print("-----------------------------")
     print("Usage: python chat_gpt_export.py [input_file] [output_file]")

@@ -55,6 +55,43 @@ def extract_user_prompts(json_file: str, only_first_prompt: bool = False) -> lis
     return user_prompts
 
 
+def _extract_conversation_timestamp(chat: dict) -> int | None:
+    """Extract the earliest message timestamp from a conversation mapping.
+
+    Iterates over all messages in the conversation's mapping and returns
+    the minimum valid Unix timestamp found.
+
+    Args:
+        chat: A conversation dict containing a 'mapping' key with message data.
+
+    Returns:
+        The earliest Unix timestamp as an integer, or None if no valid
+        timestamps are found or the input is not a valid conversation dict.
+    """
+    if not isinstance(chat, dict):
+        return None
+    mapping = chat.get('mapping', {})
+    if not isinstance(mapping, dict):
+        return None
+
+    timestamps: list[int] = []
+    for message_data in mapping.values():
+        if not isinstance(message_data, dict):
+            continue
+        msg = message_data.get('message')
+        if not isinstance(msg, dict):
+            continue
+        ts = msg.get('create_time')
+        if ts is None:
+            continue
+        try:
+            timestamps.append(int(float(ts)))
+        except (TypeError, ValueError, OverflowError):
+            continue
+
+    return min(timestamps) if timestamps else None
+
+
 def find_earliest_conversation(json_file: str) -> tuple[dict | None, int | None]:
     """Return the conversation with the earliest message timestamp and that timestamp.
 
@@ -76,25 +113,63 @@ def find_earliest_conversation(json_file: str) -> tuple[dict | None, int | None]
     earliest_time = None
 
     for chat in data:
-        mapping = chat.get('mapping', {}) if isinstance(chat, dict) else {}
-        for _, message_data in mapping.items():
-            if not message_data or not isinstance(message_data, dict):
-                continue
-            msg = message_data.get('message')
-            if not msg or not isinstance(msg, dict):
-                continue
-            ts = msg.get('create_time')
-            if ts is None:
-                continue
-            try:
-                t = int(float(ts))
-            except Exception:
-                continue
-            if earliest_time is None or t < earliest_time:
-                earliest_time = t
-                earliest_conv = chat
+        ts = _extract_conversation_timestamp(chat)
+        if ts is not None and (earliest_time is None or ts < earliest_time):
+            earliest_time = ts
+            earliest_conv = chat
 
     return earliest_conv, earliest_time
+
+
+def _extract_printable_message(message_data: dict) -> dict | None:
+    """Validate a mapping entry and return a printable message dict.
+
+    Extracts timestamp, role, and content from a conversation mapping
+    entry, performing validation at each step.
+
+    Args:
+        message_data: A single entry from a conversation's mapping dict,
+            expected to contain a 'message' key with author and content info.
+
+    Returns:
+        A dict with keys 'ts' (int), 'role' (str), and 'content' (str),
+        or None if the entry is invalid or missing required fields.
+    """
+    if not isinstance(message_data, dict):
+        return None
+    msg = message_data.get('message')
+    if not isinstance(msg, dict):
+        return None
+
+    ts = msg.get('create_time')
+    try:
+        t = int(float(ts)) if ts is not None else 0
+    except (TypeError, ValueError, OverflowError):
+        t = 0
+
+    role = msg.get('author', {}).get('role', 'unknown')
+    parts = msg.get('content', {}).get('parts', [])
+    content = ' '.join(str(p) for p in parts) if parts else ''
+
+    return {'ts': t, 'role': role, 'content': content}
+
+
+def _format_timestamp_str(ts: int | float | None) -> str:
+    """Format a Unix timestamp for display.
+
+    Args:
+        ts: A Unix timestamp as an integer or float, or None.
+
+    Returns:
+        A formatted datetime string ('YYYY-MM-DD HH:MM:SS'), 'Unknown'
+        if the timestamp is falsy, or 'Invalid' if formatting fails.
+    """
+    if not ts:
+        return 'Unknown'
+    try:
+        return datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')
+    except Exception:
+        return 'Invalid'
 
 
 def format_and_print_conversation(conv: dict, title: str | None = None) -> None:
@@ -116,31 +191,15 @@ def format_and_print_conversation(conv: dict, title: str | None = None) -> None:
 
     mapping = conv.get('mapping', {})
     messages = []
-    for message_id, message_data in mapping.items():
-        if not message_data or not isinstance(message_data, dict):
-            continue
-        msg = message_data.get('message')
-        if not msg or not isinstance(msg, dict):
-            continue
-        ts = msg.get('create_time')
-        try:
-            t = int(float(ts)) if ts is not None else 0
-        except Exception:
-            t = 0
-        role = msg.get('author', {}).get('role', 'unknown')
-        parts = msg.get('content', {}).get('parts', [])
-        content = ' '.join(str(p) for p in parts) if parts else ''
-        messages.append({'ts': t, 'role': role, 'content': content})
+    for message_data in mapping.values():
+        msg = _extract_printable_message(message_data)
+        if msg is not None:
+            messages.append(msg)
 
-    # Sort messages by timestamp
     messages.sort(key=lambda m: m.get('ts', 0))
 
     for m in messages:
-        ts = m.get('ts')
-        try:
-            ts_str = datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S') if ts else 'Unknown'
-        except Exception:
-            ts_str = 'Invalid'
+        ts_str = _format_timestamp_str(m.get('ts'))
         role = (m.get('role') or 'unknown').upper()
         print(f"[{ts_str}] {role}: {m.get('content', '')}")
     print('\n' + '-' * 60 + '\n')

@@ -181,6 +181,109 @@ def get_valid_number_input(
         except ValueError:
             print("Please enter a valid number.")
 
+def _extract_export_message(message_data: dict) -> dict | None:
+    """Validate a single mapping entry and return a parsed message dict.
+
+    Extracts role, timestamp, and content from a conversation mapping entry,
+    applying validation at each level. System messages are excluded.
+
+    Args:
+        message_data: A single value from a conversation's mapping dictionary,
+            expected to contain a nested 'message' dict with 'author',
+            'content', and 'create_time' fields.
+
+    Returns:
+        A dict with 'role', 'timestamp', and 'content' keys if the entry
+        is valid and contains content, or None if the entry should be skipped
+        (invalid structure, system message, or empty content).
+    """
+    if not isinstance(message_data, dict):
+        return None
+    message = message_data.get('message')
+    if not isinstance(message, dict):
+        return None
+    author = message.get('author')
+    if not isinstance(author, dict):
+        return None
+    role = author.get('role')
+    if role and role.lower() == 'system':
+        return None
+    content_parts = message.get('content', {}).get('parts', [])
+    if not content_parts:
+        return None
+    content = ' '.join(str(part) for part in content_parts)
+    return {
+        'role': role or 'unknown',
+        'timestamp': message.get('create_time'),
+        'content': clean_text(content),
+    }
+
+
+def _parse_mapping_messages(
+    sorted_items: list[tuple],
+) -> tuple[float | int | None, list[dict]]:
+    """Parse all messages from sorted mapping items.
+
+    Iterates over pre-sorted conversation mapping entries, extracts valid
+    messages, and tracks the earliest non-None timestamp as the conversation
+    creation time.
+
+    Args:
+        sorted_items: List of (message_id, message_data) tuples from a
+            conversation's mapping dictionary, pre-sorted by timestamp.
+
+    Returns:
+        A tuple of (create_time, messages) where create_time is the first
+        non-None timestamp encountered (or None if all timestamps are None),
+        and messages is a list of parsed message dicts.
+    """
+    create_time: float | int | None = None
+    messages: list[dict] = []
+    for _message_id, message_data in sorted_items:
+        msg = _extract_export_message(message_data)
+        if msg is None:
+            continue
+        if create_time is None and msg['timestamp']:
+            create_time = msg['timestamp']
+        messages.append(msg)
+    return create_time, messages
+
+
+def _parse_single_conversation(chat: dict) -> dict | None:
+    """Parse one conversation dict into structured form.
+
+    Extracts the title and mapping from a raw conversation object, sorts
+    the mapping entries by timestamp, and parses all valid messages.
+
+    Args:
+        chat: A single conversation dict from the ChatGPT export JSON,
+            expected to contain 'title' and 'mapping' keys.
+
+    Returns:
+        A dict with 'title', 'create_time', and 'messages' keys if the
+        conversation contains at least one valid message, or None if the
+        conversation has no mapping or no valid messages.
+    """
+    title = chat.get('title', 'Untitled Conversation')
+    if 'mapping' not in chat or not isinstance(chat['mapping'], dict):
+        return None
+
+    mapping_items = list(chat['mapping'].items())
+    try:
+        sorted_items = sorted(mapping_items, key=get_message_timestamp)
+    except (TypeError, ValueError):
+        sorted_items = mapping_items
+
+    create_time, messages = _parse_mapping_messages(sorted_items)
+    if not messages:
+        return None
+    return {
+        'title': title,
+        'create_time': create_time or 0,
+        'messages': messages,
+    }
+
+
 def _load_and_parse_conversations(json_file: str) -> list[dict]:
     """Load a ChatGPT export JSON and parse into structured conversation dicts.
 
@@ -204,48 +307,9 @@ def _load_and_parse_conversations(json_file: str) -> list[dict]:
     conversations = []
     for chat in chat_history:
         try:
-            title = chat.get('title', 'Untitled Conversation')
-            if 'mapping' not in chat or not isinstance(chat['mapping'], dict):
-                continue
-
-            mapping_items = list(chat['mapping'].items())
-            try:
-                sorted_items = sorted(mapping_items, key=get_message_timestamp)
-            except (TypeError, ValueError):
-                sorted_items = mapping_items
-
-            create_time = None
-            messages = []
-            for message_id, message_data in sorted_items:
-                if not message_data:
-                    continue
-                message = message_data.get('message')
-                if not message:
-                    continue
-                author = message.get('author', {})
-                if not author:
-                    continue
-                role = author.get('role')
-                if role and role.lower() == 'system':
-                    continue
-                timestamp = message.get('create_time')
-                if create_time is None and timestamp:
-                    create_time = timestamp
-                content_parts = message.get('content', {}).get('parts', [])
-                if content_parts:
-                    content = ' '.join(str(part) for part in content_parts)
-                    messages.append({
-                        'role': role or 'unknown',
-                        'timestamp': timestamp,
-                        'content': clean_text(content),
-                    })
-
-            if messages:
-                conversations.append({
-                    'title': title,
-                    'create_time': create_time or 0,
-                    'messages': messages,
-                })
+            result = _parse_single_conversation(chat)
+            if result is not None:
+                conversations.append(result)
         except Exception as e:
             print(f"Error processing a conversation: {str(e)}")
             continue

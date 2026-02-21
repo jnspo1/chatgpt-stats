@@ -36,7 +36,7 @@ class TestOverviewPage:
     def test_data_json_contains_summary(self, client):
         """The injected JSON should include the summary section."""
         response = client.get("/")
-        assert '"total_conversations"' in response.text
+        assert '"total_chats"' in response.text
 
 
 class TestTrendsPage:
@@ -99,32 +99,29 @@ class TestApiData:
         data = client.get("/api/data").json()
         summary = data["summary"]
         expected_keys = {
-            "total_conversations",
             "total_messages",
-            "date_range",
-            "daily_avg_conversations",
-            "daily_avg_messages",
-            "avg_messages_per_conversation",
-            "total_words",
-            "total_code_blocks",
-            "avg_words_per_message",
-            "code_block_percentage",
+            "total_chats",
+            "first_date",
+            "last_date",
+            "years_span",
+            "top_days_by_chats",
+            "top_days_by_messages",
         }
         assert expected_keys.issubset(summary.keys())
 
     def test_payload_has_chart_sections(self, client):
         data = client.get("/api/data").json()
-        for key in ("chart", "monthly", "weekly", "hourly"):
+        for key in ("charts", "monthly", "weekly", "hourly"):
             assert key in data, f"Missing key: {key}"
 
     def test_payload_has_content_sections(self, client):
         data = client.get("/api/data").json()
-        for key in ("content_chart", "content_monthly", "content_weekly"):
+        for key in ("content_charts", "content_monthly", "content_weekly"):
             assert key in data, f"Missing key: {key}"
 
     def test_payload_has_analysis_sections(self, client):
         data = client.get("/api/data").json()
-        for key in ("gap_analysis", "activity_by_year", "period_comparison"):
+        for key in ("gaps", "gap_stats", "activity_by_year", "comparison"):
             assert key in data, f"Missing key: {key}"
 
     def test_payload_matches_mock(self, client, mock_payload):

@@ -1,0 +1,116 @@
+.heatmap-wrap { overflow-x: auto; margin-bottom: 8px; }
+.heatmap {
+  display: grid;
+  grid-template-columns: 40px repeat(24, 1fr);
+  gap: 2px;
+  min-width: 500px;
+}
+.heatmap-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.heatmap-cell {
+  aspect-ratio: 1;
+  border-radius: 3px;
+  min-width: 14px;
+  min-height: 14px;
+  position: relative;
+  cursor: default;
+}
+.heatmap-cell:hover { outline: 1px solid var(--amber); outline-offset: -1px; }
+.heatmap-hour-labels {
+  display: grid;
+  grid-template-columns: 40px repeat(24, 1fr);
+  gap: 2px;
+  min-width: 500px;
+}
+.heatmap-hour-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  color: var(--text-muted);
+  text-align: center;
+}
+.heatmap-tooltip {
+  position: fixed;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text);
+  pointer-events: none;
+  z-index: 100;
+  white-space: nowrap;
+  display: none;
+}
+.weekday-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+@media (max-width: 640px) { .weekday-stats { grid-template-columns: 1fr; } }
+.weekday-stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 24px;
+  text-align: center;
+}
+.weekday-stat-card h3 {
+  font-size: 13px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+}
+.weekday-stat-big {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  margin-bottom: 4px;
+}
+.weekday-stat-sub {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+.weekday-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 4px 0;
+}
+.weekday-bar-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text-dim);
+  width: 30px;
+  text-align: right;
+}
+.weekday-bar-track {
+  flex: 1;
+  height: 8px;
+  background: var(--surface2);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.weekday-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
+.weekday-bar-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text);
+  width: 45px;
+  text-align: right;
+}

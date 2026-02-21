@@ -15,6 +15,10 @@ from analytics import (
     build_dashboard_payload,
     compute_activity_by_year,
     compute_chart_data,
+    compute_code_stats,
+    compute_content_chart_data,
+    compute_content_monthly_data,
+    compute_content_weekly_data,
     compute_gap_analysis,
     compute_hourly_data,
     compute_length_distribution,
@@ -862,3 +866,184 @@ class TestBuildDailyRecords:
         records = _build_daily_records(stats)
         assert records[0]["avg_messages_per_chat"] == 0
         assert records[0]["max_messages_in_chat"] == 0
+
+
+# ── Helper for content metric tests ──────────
+
+
+def _make_content_record(date_str, user_words=100, user_msgs=5, user_code=1,
+                         asst_words=200, asst_msgs=5, asst_code=2):
+    """Build a daily record with content metric fields for testing."""
+    return {
+        "date": date_str,
+        "total_messages": user_msgs + asst_msgs,
+        "total_chats": 1,
+        "avg_messages_per_chat": float(user_msgs + asst_msgs),
+        "max_messages_in_chat": user_msgs + asst_msgs,
+        "user_words": user_words,
+        "user_chars": user_words * 5,
+        "user_msgs": user_msgs,
+        "user_code_msgs": user_code,
+        "asst_words": asst_words,
+        "asst_chars": asst_words * 5,
+        "asst_msgs": asst_msgs,
+        "asst_code_msgs": asst_code,
+    }
+
+
+# ── TestComputeCodeStats ─────────────────────
+
+
+class TestComputeCodeStats:
+    def test_empty_summaries(self):
+        result = compute_code_stats([])
+        assert result["total_conversations_with_code"] == 0
+        assert result["pct_with_code"] == 0.0
+        assert result["language_counts"] == []
+
+    def test_some_with_code(self):
+        summaries = [
+            {"code_languages": ["python", "javascript"]},
+            {"code_languages": []},
+            {"code_languages": ["python"]},
+        ]
+        result = compute_code_stats(summaries)
+        assert result["total_conversations_with_code"] == 2
+        assert result["pct_with_code"] == pytest.approx(66.7, abs=0.1)
+
+    def test_language_counts_sorted_by_frequency(self):
+        summaries = [
+            {"code_languages": ["python", "javascript"]},
+            {"code_languages": ["python", "rust"]},
+            {"code_languages": ["python"]},
+        ]
+        result = compute_code_stats(summaries)
+        langs = result["language_counts"]
+        assert langs[0]["language"] == "python"
+        assert langs[0]["count"] == 3
+        # javascript and rust each appear once; python is first
+        assert len(langs) == 3
+        assert all(langs[i]["count"] >= langs[i + 1]["count"] for i in range(len(langs) - 1))
+
+    def test_no_conversations_have_code(self):
+        summaries = [
+            {"code_languages": []},
+            {"code_languages": []},
+        ]
+        result = compute_code_stats(summaries)
+        assert result["total_conversations_with_code"] == 0
+        assert result["pct_with_code"] == 0.0
+        assert result["language_counts"] == []
+
+
+# ── TestComputeContentChartData ──────────────
+
+
+class TestComputeContentChartData:
+    def test_empty_records(self):
+        result = compute_content_chart_data([])
+        assert result["dates"] == []
+        for key in ("avg_user_words", "avg_asst_words", "response_ratio",
+                     "code_pct_user", "code_pct_asst"):
+            assert result[key]["values"] == []
+            assert result[key]["avg_7d"] == []
+            assert result[key]["avg_28d"] == []
+
+    def test_single_record(self):
+        records = [_make_content_record("2024-01-15",
+                                        user_words=100, user_msgs=5,
+                                        asst_words=200, asst_msgs=5)]
+        result = compute_content_chart_data(records)
+        assert result["dates"] == ["2024-01-15"]
+        # avg_user_words = 100/5 = 20.0
+        assert result["avg_user_words"]["values"] == [pytest.approx(20.0)]
+        # avg_asst_words = 200/5 = 40.0
+        assert result["avg_asst_words"]["values"] == [pytest.approx(40.0)]
+        # response_ratio = 200/100 = 2.0
+        assert result["response_ratio"]["values"] == [pytest.approx(2.0)]
+
+    def test_multiple_records_sorted(self):
+        records = [
+            _make_content_record("2024-01-17"),
+            _make_content_record("2024-01-15"),
+            _make_content_record("2024-01-16"),
+        ]
+        result = compute_content_chart_data(records)
+        assert result["dates"] == ["2024-01-15", "2024-01-16", "2024-01-17"]
+
+    def test_metric_lengths_match_dates(self):
+        records = [_make_content_record(f"2024-01-{d:02d}") for d in range(1, 11)]
+        result = compute_content_chart_data(records)
+        n = len(result["dates"])
+        assert n == 10
+        for key in ("avg_user_words", "avg_asst_words", "response_ratio",
+                     "code_pct_user", "code_pct_asst"):
+            assert len(result[key]["values"]) == n
+            assert len(result[key]["avg_7d"]) == n
+            assert len(result[key]["avg_28d"]) == n
+
+    def test_all_five_metric_keys_present(self):
+        records = [_make_content_record("2024-01-15")]
+        result = compute_content_chart_data(records)
+        expected_keys = {"dates", "avg_user_words", "avg_asst_words",
+                         "response_ratio", "code_pct_user", "code_pct_asst"}
+        assert set(result.keys()) == expected_keys
+
+
+# ── TestComputeContentWeeklyData ─────────────
+
+
+class TestComputeContentWeeklyData:
+    def test_empty_records(self):
+        result = compute_content_weekly_data([])
+        assert result["weeks"] == []
+
+    def test_same_week_aggregated(self):
+        # Mon Jan 15 and Tue Jan 16, 2024 are same ISO week (2024-W03)
+        records = [
+            _make_content_record("2024-01-15", user_words=100, user_msgs=5,
+                                 asst_words=200, asst_msgs=5),
+            _make_content_record("2024-01-16", user_words=50, user_msgs=5,
+                                 asst_words=100, asst_msgs=5),
+        ]
+        result = compute_content_weekly_data(records)
+        assert len(result["weeks"]) == 1
+        # Aggregated: user_words=150, user_msgs=10 → avg=15.0
+        assert result["avg_user_words"]["values"] == [pytest.approx(15.0)]
+
+    def test_has_correct_metric_keys(self):
+        records = [_make_content_record("2024-01-15")]
+        result = compute_content_weekly_data(records)
+        expected_keys = {"weeks", "avg_user_words", "avg_asst_words",
+                         "response_ratio", "code_pct_user", "code_pct_asst"}
+        assert set(result.keys()) == expected_keys
+
+
+# ── TestComputeContentMonthlyData ────────────
+
+
+class TestComputeContentMonthlyData:
+    def test_empty_records(self):
+        result = compute_content_monthly_data([])
+        assert result["months"] == []
+
+    def test_same_month_aggregated(self):
+        records = [
+            _make_content_record("2024-01-15", user_words=100, user_msgs=5,
+                                 asst_words=200, asst_msgs=5),
+            _make_content_record("2024-01-20", user_words=50, user_msgs=5,
+                                 asst_words=100, asst_msgs=5),
+        ]
+        result = compute_content_monthly_data(records)
+        assert result["months"] == ["2024-01"]
+        # Aggregated: user_words=150, user_msgs=10 → avg=15.0
+        assert result["avg_user_words"]["values"] == [pytest.approx(15.0)]
+        # Aggregated: asst_words=300, asst_msgs=10 → avg=30.0
+        assert result["avg_asst_words"]["values"] == [pytest.approx(30.0)]
+
+    def test_has_correct_metric_keys(self):
+        records = [_make_content_record("2024-01-15")]
+        result = compute_content_monthly_data(records)
+        expected_keys = {"months", "avg_user_words", "avg_asst_words",
+                         "response_ratio", "code_pct_user", "code_pct_asst"}
+        assert set(result.keys()) == expected_keys

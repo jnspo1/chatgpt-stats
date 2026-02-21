@@ -114,6 +114,214 @@ def _build_daily_records(daily_stats: dict) -> list[dict]:
     return daily_records
 
 
+def _extract_conversation_messages(
+    chat: dict,
+) -> list[tuple[str, float | None, int, int, bool, list[str]]]:
+    """Walk a conversation mapping and extract valid user/assistant messages.
+
+    Validates each node in the mapping tree, filters to "user" and
+    "assistant" roles, and extracts content metrics via
+    ``_extract_message_content``.
+
+    Args:
+        chat: A single conversation dict from the OpenAI export.  Must
+            contain a "mapping" key whose values are message-node dicts.
+
+    Returns:
+        List of tuples (role, create_time, word_count, char_count,
+        has_code, code_languages) for each valid user or assistant
+        message.  Returns an empty list if the mapping is missing or
+        not a dict.
+    """
+    mapping = chat.get("mapping", {})
+    if not isinstance(mapping, dict):
+        return []
+
+    results: list[tuple[str, float | None, int, int, bool, list[str]]] = []
+    for message_data in mapping.values():
+        message = message_data.get("message") if isinstance(message_data, dict) else None
+        if message is None:
+            continue
+
+        author = message.get("author")
+        if author is None or not isinstance(author, dict):
+            continue
+
+        role = author.get("role")
+        if role not in ("user", "assistant"):
+            continue
+
+        create_time = message.get("create_time")
+        _, word_count, char_count, has_code, code_langs = _extract_message_content(message)
+        results.append((role, create_time, word_count, char_count, has_code, code_langs))
+
+    return results
+
+
+def _update_time_range(
+    start: datetime | None,
+    end: datetime | None,
+    new_time: datetime,
+) -> tuple[datetime, datetime]:
+    """Update a start/end time range with a new timestamp.
+
+    Expands the range so that *start* is the earliest and *end* is
+    the latest time seen so far.
+
+    Args:
+        start: Current earliest datetime, or None if no times seen yet.
+        end: Current latest datetime, or None if no times seen yet.
+        new_time: The new datetime to incorporate into the range.
+
+    Returns:
+        A (start, end) tuple with the updated range.
+    """
+    if start is None or new_time < start:
+        start = new_time
+    if end is None or new_time > end:
+        end = new_time
+    return start, end
+
+
+def _accumulate_user_daily_stats(
+    daily_stats: dict,
+    message_date: object,
+    word_count: int,
+    char_count: int,
+    has_code: bool,
+) -> None:
+    """Accumulate a user message's metrics into the daily stats bucket.
+
+    Creates a new daily bucket if one does not exist for *message_date*.
+    Increments total_messages, user_words, user_chars, user_msgs, and
+    (conditionally) user_code_msgs.
+
+    Args:
+        daily_stats: Dict mapping date objects to accumulator dicts.
+        message_date: The date of the user message.
+        word_count: Number of words in the message.
+        char_count: Number of characters in the message.
+        has_code: Whether the message contains a code block.
+    """
+    if message_date not in daily_stats:
+        daily_stats[message_date] = _init_daily_bucket()
+    daily_stats[message_date]["total_messages"] += 1
+    daily_stats[message_date]["user_words"] += word_count
+    daily_stats[message_date]["user_chars"] += char_count
+    daily_stats[message_date]["user_msgs"] += 1
+    if has_code:
+        daily_stats[message_date]["user_code_msgs"] += 1
+
+
+def _accumulate_asst_daily_stats(
+    daily_stats: dict,
+    asst_date: object,
+    word_count: int,
+    char_count: int,
+    has_code: bool,
+) -> None:
+    """Accumulate an assistant message's metrics into the daily stats bucket.
+
+    Only updates an existing bucket — does nothing if *asst_date* is
+    not already present in *daily_stats*.
+
+    Args:
+        daily_stats: Dict mapping date objects to accumulator dicts.
+        asst_date: The date to attribute the assistant message to.
+        word_count: Number of words in the message.
+        char_count: Number of characters in the message.
+        has_code: Whether the message contains a code block.
+    """
+    if asst_date not in daily_stats:
+        return
+    daily_stats[asst_date]["asst_words"] += word_count
+    daily_stats[asst_date]["asst_chars"] += char_count
+    daily_stats[asst_date]["asst_msgs"] += 1
+    if has_code:
+        daily_stats[asst_date]["asst_code_msgs"] += 1
+
+
+def _process_chat_messages(
+    messages: list[tuple[str, float | None, int, int, bool, list[str]]],
+    daily_stats: dict,
+    all_timestamps: list[datetime],
+) -> dict | None:
+    """Process extracted messages for a single conversation.
+
+    Loops over messages, accumulates daily stats for user and assistant
+    messages, tracks timestamps, and builds a chat summary dict.
+
+    Args:
+        messages: List of (role, create_time, word_count, char_count,
+            has_code, code_languages) tuples from
+            ``_extract_conversation_messages``.
+        daily_stats: Shared dict mapping date objects to accumulator
+            dicts.  Modified in place.
+        all_timestamps: Shared list of user message datetimes.  Appended
+            to in place.
+
+    Returns:
+        A chat summary dict if the conversation had at least one valid
+        user message, or None otherwise.
+    """
+    chat_message_count = 0
+    chat_start_time: datetime | None = None
+    chat_end_time: datetime | None = None
+    chat_user_words = 0
+    chat_asst_words = 0
+    chat_code_langs: set[str] = set()
+
+    for role, create_time, word_count, char_count, has_code, code_langs in messages:
+        chat_code_langs.update(code_langs)
+
+        if role == "user" and create_time is not None:
+            try:
+                message_datetime = datetime.fromtimestamp(float(create_time))
+            except (TypeError, ValueError, OSError, OverflowError):
+                continue
+            chat_message_count += 1
+            chat_user_words += word_count
+            all_timestamps.append(message_datetime)
+            chat_start_time, chat_end_time = _update_time_range(
+                chat_start_time, chat_end_time, message_datetime,
+            )
+            _accumulate_user_daily_stats(
+                daily_stats, message_datetime.date(), word_count, char_count, has_code,
+            )
+        elif role == "assistant":
+            chat_asst_words += word_count
+            if chat_start_time is not None:
+                _accumulate_asst_daily_stats(
+                    daily_stats, chat_start_time.date(), word_count, char_count, has_code,
+                )
+
+    if chat_message_count == 0:
+        return None
+
+    chat_date = chat_start_time.date()
+    chat_duration = (chat_end_time - chat_start_time).total_seconds() / 60
+    response_ratio = (
+        round(chat_asst_words / chat_user_words, 2)
+        if chat_user_words > 0
+        else 0.0
+    )
+
+    daily_stats[chat_date]["total_chats"] += 1
+    daily_stats[chat_date]["messages_per_chat"].append(chat_message_count)
+
+    return {
+        "date": chat_date.isoformat(),
+        "start_time": chat_start_time.isoformat(),
+        "end_time": chat_end_time.isoformat(),
+        "message_count": chat_message_count,
+        "duration_minutes": round(chat_duration, 2),
+        "user_words": chat_user_words,
+        "asst_words": chat_asst_words,
+        "response_ratio": response_ratio,
+        "code_languages": sorted(chat_code_langs),
+    }
+
+
 def process_conversations(
     conversations: list[dict],
 ) -> tuple[list[dict], list[dict], list[datetime]]:
@@ -144,93 +352,12 @@ def process_conversations(
     all_message_timestamps: list[datetime] = []
 
     for chat in conversations:
-        chat_message_count = 0
-        chat_start_time = None
-        chat_end_time = None
-        chat_user_words = 0
-        chat_asst_words = 0
-        chat_code_langs: set[str] = set()
-
-        mapping = chat.get("mapping", {})
-        if not isinstance(mapping, dict):
+        messages = _extract_conversation_messages(chat)
+        if not messages:
             continue
-
-        for message_data in mapping.values():
-            message = message_data.get("message") if isinstance(message_data, dict) else None
-            if message is None:
-                continue
-
-            author = message.get("author")
-            if author is None or not isinstance(author, dict):
-                continue
-
-            author_role = author.get("role")
-            create_time = message.get("create_time")
-            _, word_count, char_count, has_code, code_langs = _extract_message_content(message)
-            chat_code_langs.update(code_langs)
-
-            if author_role == "user" and create_time is not None:
-                try:
-                    message_datetime = datetime.fromtimestamp(float(create_time))
-                except (TypeError, ValueError, OSError, OverflowError):
-                    continue
-                chat_message_count += 1
-                chat_user_words += word_count
-                message_date = message_datetime.date()
-
-                all_message_timestamps.append(message_datetime)
-
-                if chat_start_time is None or message_datetime < chat_start_time:
-                    chat_start_time = message_datetime
-                if chat_end_time is None or message_datetime > chat_end_time:
-                    chat_end_time = message_datetime
-
-                if message_date not in daily_stats:
-                    daily_stats[message_date] = _init_daily_bucket()
-                daily_stats[message_date]["total_messages"] += 1
-                daily_stats[message_date]["user_words"] += word_count
-                daily_stats[message_date]["user_chars"] += char_count
-                daily_stats[message_date]["user_msgs"] += 1
-                if has_code:
-                    daily_stats[message_date]["user_code_msgs"] += 1
-
-            elif author_role == "assistant":
-                chat_asst_words += word_count
-                # Use user's chat_start_time date for assistant stats
-                if chat_start_time is not None:
-                    asst_date = chat_start_time.date()
-                    if asst_date in daily_stats:
-                        daily_stats[asst_date]["asst_words"] += word_count
-                        daily_stats[asst_date]["asst_chars"] += char_count
-                        daily_stats[asst_date]["asst_msgs"] += 1
-                        if has_code:
-                            daily_stats[asst_date]["asst_code_msgs"] += 1
-
-        if chat_message_count > 0:
-            chat_date = chat_start_time.date()
-            chat_duration = (chat_end_time - chat_start_time).total_seconds() / 60
-
-            response_ratio = (
-                round(chat_asst_words / chat_user_words, 2)
-                if chat_user_words > 0
-                else 0.0
-            )
-            chat_summaries.append(
-                {
-                    "date": chat_date.isoformat(),
-                    "start_time": chat_start_time.isoformat(),
-                    "end_time": chat_end_time.isoformat(),
-                    "message_count": chat_message_count,
-                    "duration_minutes": round(chat_duration, 2),
-                    "user_words": chat_user_words,
-                    "asst_words": chat_asst_words,
-                    "response_ratio": response_ratio,
-                    "code_languages": sorted(chat_code_langs),
-                }
-            )
-
-            daily_stats[chat_date]["total_chats"] += 1
-            daily_stats[chat_date]["messages_per_chat"].append(chat_message_count)
+        summary = _process_chat_messages(messages, daily_stats, all_message_timestamps)
+        if summary is not None:
+            chat_summaries.append(summary)
 
     if conversations and not chat_summaries:
         logger.warning(
@@ -317,6 +444,78 @@ def compute_gap_analysis(
     }
 
 
+def _compute_year_stats(
+    yr: int,
+    active_by_year: dict[int, set],
+    first_date: object,
+    last_date: object,
+) -> dict:
+    """Compute activity statistics for a single calendar year.
+
+    Determines the date range for the year: the first/last years use
+    actual message date boundaries, while middle years span the full
+    calendar year (Jan 1 to Dec 31).
+
+    Args:
+        yr: The calendar year to compute stats for.
+        active_by_year: Dict mapping year ints to sets of active dates.
+        first_date: The earliest message date across all years.
+        last_date: The latest message date across all years.
+
+    Returns:
+        Dict with keys year (str), total_days, days_active,
+        days_inactive, pct_active, pct_inactive.
+    """
+    from datetime import date as date_type
+
+    start = first_date if yr == first_date.year else date_type(yr, 1, 1)
+    end = last_date if yr == last_date.year else date_type(yr, 12, 31)
+
+    total = (end - start).days + 1
+    active = len(active_by_year.get(yr, set()))
+    inactive = total - active
+    pct_active = round(active / total * 100, 1) if total > 0 else 0.0
+    pct_inactive = round(inactive / total * 100, 1) if total > 0 else 0.0
+
+    return {
+        "year": str(yr),
+        "total_days": total,
+        "days_active": active,
+        "days_inactive": inactive,
+        "pct_active": pct_active,
+        "pct_inactive": pct_inactive,
+    }
+
+
+def _compute_overall_stats(
+    active_dates: set,
+    first_date: object,
+    last_date: object,
+) -> dict:
+    """Compute overall activity statistics across the full date range.
+
+    Args:
+        active_dates: Set of all dates that had at least one message.
+        first_date: The earliest message date.
+        last_date: The latest message date.
+
+    Returns:
+        Dict with keys year ("Overall"), total_days, days_active,
+        days_inactive, pct_active, pct_inactive.
+    """
+    total = (last_date - first_date).days + 1
+    active = len(active_dates)
+    inactive = total - active
+    return {
+        "year": "Overall",
+        "total_days": total,
+        "days_active": active,
+        "days_inactive": inactive,
+        "pct_active": round(active / total * 100, 1) if total > 0 else 0.0,
+        "pct_inactive": round(inactive / total * 100, 1) if total > 0 else 0.0,
+    }
+
+
 def compute_activity_by_year(timestamps: list[datetime]) -> list[dict]:
     """Compute per-year activity breakdown from message timestamps.
 
@@ -337,60 +536,18 @@ def compute_activity_by_year(timestamps: list[datetime]) -> list[dict]:
     if not timestamps:
         return []
 
-    from datetime import date as date_type
-
     sorted_ts = sorted(timestamps)
     active_dates = set(ts.date() for ts in sorted_ts)
     first_date = sorted_ts[0].date()
     last_date = sorted_ts[-1].date()
 
-    # Group active dates by year
-    years_set: set[int] = set()
     active_by_year: dict[int, set] = {}
     for d in active_dates:
-        years_set.add(d.year)
         active_by_year.setdefault(d.year, set()).add(d)
 
-    years = sorted(years_set)
-    rows = []
-
-    for yr in years:
-        if yr == first_date.year:
-            start = first_date
-        else:
-            start = date_type(yr, 1, 1)
-        if yr == last_date.year:
-            end = last_date
-        else:
-            end = date_type(yr, 12, 31)
-
-        total = (end - start).days + 1
-        active = len(active_by_year.get(yr, set()))
-        inactive = total - active
-        pct_active = round(active / total * 100, 1) if total > 0 else 0.0
-        pct_inactive = round(inactive / total * 100, 1) if total > 0 else 0.0
-
-        rows.append({
-            "year": str(yr),
-            "total_days": total,
-            "days_active": active,
-            "days_inactive": inactive,
-            "pct_active": pct_active,
-            "pct_inactive": pct_inactive,
-        })
-
-    # Overall row
-    overall_total = (last_date - first_date).days + 1
-    overall_active = len(active_dates)
-    overall_inactive = overall_total - overall_active
-    overall = {
-        "year": "Overall",
-        "total_days": overall_total,
-        "days_active": overall_active,
-        "days_inactive": overall_inactive,
-        "pct_active": round(overall_active / overall_total * 100, 1) if overall_total > 0 else 0.0,
-        "pct_inactive": round(overall_inactive / overall_total * 100, 1) if overall_total > 0 else 0.0,
-    }
+    years = sorted(active_by_year.keys())
+    rows = [_compute_year_stats(yr, active_by_year, first_date, last_date) for yr in years]
+    overall = _compute_overall_stats(active_dates, first_date, last_date)
 
     return [overall] + rows
 
@@ -485,6 +642,51 @@ def _expanding_avg(values: list[float]) -> list[float]:
     return result
 
 
+def _format_rolling(values: list[float], window: int) -> list[float]:
+    """Compute a rolling average and round each element to 2 decimal places.
+
+    Args:
+        values: Numeric series to smooth.
+        window: Rolling window size passed to ``_rolling_avg``.
+
+    Returns:
+        List of floats, same length as *values*, each rounded to 2dp.
+    """
+    return [round(v, 2) for v in _rolling_avg(values, window)]
+
+
+def _format_expanding(values: list[float]) -> list[float]:
+    """Compute an expanding average and round each element to 2 decimal places.
+
+    Args:
+        values: Numeric series to compute running average over.
+
+    Returns:
+        List of floats, same length as *values*, each rounded to 2dp.
+    """
+    return [round(v, 2) for v in _expanding_avg(values)]
+
+
+def _build_chart_series(values: list[float]) -> dict[str, list[float]]:
+    """Build a chart series dict with raw values and rolling averages.
+
+    Produces the standard structure used by Chart.js rendering: raw
+    values plus 7-day, 28-day, and lifetime rolling averages.
+
+    Args:
+        values: Raw numeric series for one metric.
+
+    Returns:
+        Dict with keys: values, avg_7d, avg_28d, avg_lifetime.
+    """
+    return {
+        "values": values,
+        "avg_7d": _format_rolling(values, 7),
+        "avg_28d": _format_rolling(values, 28),
+        "avg_lifetime": _format_expanding(values),
+    }
+
+
 def compute_chart_data(daily_records: list[dict]) -> dict[str, Any]:
     """Compute chart series from daily records for Chart.js rendering.
 
@@ -502,33 +704,43 @@ def compute_chart_data(daily_records: list[dict]) -> dict[str, Any]:
         keys: values, avg_7d, avg_28d, avg_lifetime.
     """
     sorted_records = sorted(daily_records, key=lambda r: r["date"])
-
     dates = [r["date"] for r in sorted_records]
     chats = [r["total_chats"] for r in sorted_records]
     avg_msgs = [r["avg_messages_per_chat"] for r in sorted_records]
     total_msgs = [r["total_messages"] for r in sorted_records]
-
     return {
         "dates": dates,
-        "chats": {
-            "values": chats,
-            "avg_7d": [round(v, 2) for v in _rolling_avg(chats, 7)],
-            "avg_28d": [round(v, 2) for v in _rolling_avg(chats, 28)],
-            "avg_lifetime": [round(v, 2) for v in _expanding_avg(chats)],
-        },
-        "avg_messages": {
-            "values": avg_msgs,
-            "avg_7d": [round(v, 2) for v in _rolling_avg(avg_msgs, 7)],
-            "avg_28d": [round(v, 2) for v in _rolling_avg(avg_msgs, 28)],
-            "avg_lifetime": [round(v, 2) for v in _expanding_avg(avg_msgs)],
-        },
-        "total_messages": {
-            "values": total_msgs,
-            "avg_7d": [round(v, 2) for v in _rolling_avg(total_msgs, 7)],
-            "avg_28d": [round(v, 2) for v in _rolling_avg(total_msgs, 28)],
-            "avg_lifetime": [round(v, 2) for v in _expanding_avg(total_msgs)],
-        },
+        "chats": _build_chart_series(chats),
+        "avg_messages": _build_chart_series(avg_msgs),
+        "total_messages": _build_chart_series(total_msgs),
     }
+
+
+def _build_monthly_buckets(sorted_records: list[dict]) -> dict[str, dict]:
+    """Aggregate sorted daily records into monthly buckets.
+
+    Groups records by their "YYYY-MM" month key and sums chats,
+    messages, and raw totals for avg-message computation.
+
+    Args:
+        sorted_records: List of daily record dicts, already sorted by
+            date.  Each must contain "date", "total_chats", and
+            "total_messages".
+
+    Returns:
+        Dict mapping "YYYY-MM" month keys to bucket dicts with keys
+        chats, messages, total_msgs_raw, total_chats_raw.
+    """
+    monthly: dict[str, dict] = {}
+    for r in sorted_records:
+        month = r["date"][:7]
+        if month not in monthly:
+            monthly[month] = {"chats": 0, "messages": 0, "total_msgs_raw": 0, "total_chats_raw": 0}
+        monthly[month]["chats"] += r["total_chats"]
+        monthly[month]["messages"] += r["total_messages"]
+        monthly[month]["total_msgs_raw"] += r["total_messages"]
+        monthly[month]["total_chats_raw"] += r["total_chats"]
+    return monthly
 
 
 def compute_monthly_data(daily_records: list[dict]) -> dict[str, Any]:
@@ -545,16 +757,7 @@ def compute_monthly_data(daily_records: list[dict]) -> dict[str, Any]:
         (3-month rolling average of messages).
     """
     sorted_records = sorted(daily_records, key=lambda r: r["date"])
-
-    monthly: dict[str, dict] = {}
-    for r in sorted_records:
-        month = r["date"][:7]  # "YYYY-MM"
-        if month not in monthly:
-            monthly[month] = {"chats": 0, "messages": 0, "total_msgs_raw": 0, "total_chats_raw": 0}
-        monthly[month]["chats"] += r["total_chats"]
-        monthly[month]["messages"] += r["total_messages"]
-        monthly[month]["total_msgs_raw"] += r["total_messages"]
-        monthly[month]["total_chats_raw"] += r["total_chats"]
+    monthly = _build_monthly_buckets(sorted_records)
 
     months = sorted(monthly.keys())
     chats = [monthly[m]["chats"] for m in months]
@@ -570,9 +773,77 @@ def compute_monthly_data(daily_records: list[dict]) -> dict[str, Any]:
         "chats": chats,
         "messages": messages,
         "avg_messages": avg_messages,
-        "chats_avg_3m": [round(v, 2) for v in _rolling_avg([float(c) for c in chats], 3)],
-        "messages_avg_3m": [round(v, 2) for v in _rolling_avg([float(m) for m in messages], 3)],
+        "chats_avg_3m": _format_rolling(chats, 3),
+        "messages_avg_3m": _format_rolling(messages, 3),
     }
+
+
+def _build_weekly_buckets(sorted_records: list[dict]) -> dict[str, dict]:
+    """Aggregate sorted daily records into ISO-week buckets.
+
+    Groups records by ISO week key and sums chats, messages, and raw
+    totals for avg-message computation.
+
+    Args:
+        sorted_records: List of daily record dicts, already sorted by
+            date.  Each must contain "date", "total_chats", and
+            "total_messages".
+
+    Returns:
+        Dict mapping ISO week keys ("YYYY-Www") to bucket dicts with
+        keys monday (isoformat string), chats, messages, total_msgs,
+        total_chats.
+    """
+    from datetime import date as date_type
+
+    weekly: dict[str, dict] = {}
+    for r in sorted_records:
+        d = date_type.fromisoformat(r["date"])
+        iso = d.isocalendar()
+        week_key = f"{iso[0]}-W{iso[1]:02d}"
+        monday = d - timedelta(days=d.weekday())
+        if week_key not in weekly:
+            weekly[week_key] = {
+                "monday": monday.isoformat(),
+                "chats": 0,
+                "messages": 0,
+                "total_msgs": 0,
+                "total_chats": 0,
+            }
+        weekly[week_key]["chats"] += r["total_chats"]
+        weekly[week_key]["messages"] += r["total_messages"]
+        weekly[week_key]["total_msgs"] += r["total_messages"]
+        weekly[week_key]["total_chats"] += r["total_chats"]
+    return weekly
+
+
+def _weekly_series_from_buckets(
+    weekly: dict[str, dict],
+) -> tuple[list[str], list[int], list[int], list[float]]:
+    """Extract parallel series lists from weekly buckets.
+
+    Sorts bucket keys and builds aligned lists of Monday dates, chat
+    counts, message counts, and average messages per chat.
+
+    Args:
+        weekly: Dict mapping ISO week keys to bucket dicts (from
+            ``_build_weekly_buckets``).
+
+    Returns:
+        A 4-tuple of (weeks, chats, messages, avg_messages) where
+        weeks is a list of Monday ISO date strings and the rest are
+        parallel numeric lists.
+    """
+    sorted_keys = sorted(weekly.keys())
+    weeks = [weekly[k]["monday"] for k in sorted_keys]
+    chats = [weekly[k]["chats"] for k in sorted_keys]
+    messages = [weekly[k]["messages"] for k in sorted_keys]
+    avg_messages = [
+        round(weekly[k]["total_msgs"] / weekly[k]["total_chats"], 2)
+        if weekly[k]["total_chats"] > 0 else 0
+        for k in sorted_keys
+    ]
+    return weeks, chats, messages, avg_messages
 
 
 def compute_weekly_data(daily_records: list[dict]) -> dict[str, Any]:
@@ -588,44 +859,21 @@ def compute_weekly_data(daily_records: list[dict]) -> dict[str, Any]:
         chats_avg_4w, chats_avg_12w, messages_avg_4w, messages_avg_12w,
         avg_messages_avg_4w, avg_messages_avg_12w.
     """
-    from datetime import date as date_type
-
     sorted_records = sorted(daily_records, key=lambda r: r["date"])
-
-    weekly: dict[str, dict] = {}
-    for r in sorted_records:
-        d = date_type.fromisoformat(r["date"])
-        iso = d.isocalendar()
-        week_key = f"{iso[0]}-W{iso[1]:02d}"
-        monday = d - timedelta(days=d.weekday())
-        if week_key not in weekly:
-            weekly[week_key] = {"monday": monday.isoformat(), "chats": 0, "messages": 0, "total_msgs": 0, "total_chats": 0}
-        weekly[week_key]["chats"] += r["total_chats"]
-        weekly[week_key]["messages"] += r["total_messages"]
-        weekly[week_key]["total_msgs"] += r["total_messages"]
-        weekly[week_key]["total_chats"] += r["total_chats"]
-
-    sorted_keys = sorted(weekly.keys())
-    weeks = [weekly[k]["monday"] for k in sorted_keys]
-    chats = [weekly[k]["chats"] for k in sorted_keys]
-    messages = [weekly[k]["messages"] for k in sorted_keys]
-    avg_messages = [
-        round(weekly[k]["total_msgs"] / weekly[k]["total_chats"], 2)
-        if weekly[k]["total_chats"] > 0 else 0
-        for k in sorted_keys
-    ]
+    weekly = _build_weekly_buckets(sorted_records)
+    weeks, chats, messages, avg_messages = _weekly_series_from_buckets(weekly)
 
     return {
         "weeks": weeks,
         "chats": chats,
         "messages": messages,
         "avg_messages": avg_messages,
-        "chats_avg_4w": [round(v, 2) for v in _rolling_avg([float(c) for c in chats], 4)],
-        "chats_avg_12w": [round(v, 2) for v in _rolling_avg([float(c) for c in chats], 12)],
-        "messages_avg_4w": [round(v, 2) for v in _rolling_avg([float(m) for m in messages], 4)],
-        "messages_avg_12w": [round(v, 2) for v in _rolling_avg([float(m) for m in messages], 12)],
-        "avg_messages_avg_4w": [round(v, 2) for v in _rolling_avg([float(a) for a in avg_messages], 4)],
-        "avg_messages_avg_12w": [round(v, 2) for v in _rolling_avg([float(a) for a in avg_messages], 12)],
+        "chats_avg_4w": _format_rolling(chats, 4),
+        "chats_avg_12w": _format_rolling(chats, 12),
+        "messages_avg_4w": _format_rolling(messages, 4),
+        "messages_avg_12w": _format_rolling(messages, 12),
+        "avg_messages_avg_4w": _format_rolling(avg_messages, 4),
+        "avg_messages_avg_12w": _format_rolling(avg_messages, 12),
     }
 
 
@@ -921,6 +1169,59 @@ def compute_length_distribution(summaries: list[dict]) -> dict[str, Any]:
     }
 
 
+def _compute_period_bucket(
+    daily_records: list[dict],
+    match_fn: object,
+) -> dict[str, int | float]:
+    """Aggregate daily records matching a predicate into a period bucket.
+
+    Loops through all daily records and accumulates chats and messages
+    for those where *match_fn* returns True.
+
+    Args:
+        daily_records: List of per-day aggregate dicts.  Each must
+            contain "date", "total_chats", and "total_messages".
+        match_fn: A callable taking a single record dict and returning
+            True if the record belongs to this period.
+
+    Returns:
+        Dict with keys chats (int), messages (int), avg_messages (float).
+    """
+    chats = 0
+    messages = 0
+    total_chats = 0
+    for r in daily_records:
+        if match_fn(r):
+            chats += r["total_chats"]
+            messages += r["total_messages"]
+            total_chats += r["total_chats"]
+    avg = round(messages / total_chats, 2) if total_chats > 0 else 0
+    return {"chats": chats, "messages": messages, "avg_messages": avg}
+
+
+def _add_period_projections(
+    stats: dict,
+    elapsed: int,
+    total: int,
+) -> None:
+    """Add pro-rata projections to a current-period stats dict.
+
+    Computes projected_chats and projected_messages by scaling the
+    actual values by the ratio of total to elapsed days.
+
+    Args:
+        stats: Period stats dict (modified in place).  Must contain
+            "chats" and "messages" keys.
+        elapsed: Number of days elapsed in the current period.
+        total: Total number of days in the full period.
+    """
+    stats["elapsed_days"] = elapsed
+    stats["total_days"] = total
+    factor = total / elapsed if elapsed > 0 else 1
+    stats["projected_chats"] = round(stats["chats"] * factor, 2)
+    stats["projected_messages"] = round(stats["messages"] * factor, 2)
+
+
 def compute_period_comparison(
     daily_records: list[dict],
     reference_date: str | None = None,
@@ -951,66 +1252,24 @@ def compute_period_comparison(
     else:
         ref = date_type.today()
 
-    this_month = f"{ref.year}-{ref.month:02d}"
-    if ref.month == 1:
-        last_month = f"{ref.year - 1}-12"
-    else:
-        last_month = f"{ref.year}-{ref.month - 1:02d}"
-    this_year = str(ref.year)
-    last_year = str(ref.year - 1)
+    this_month_key = f"{ref.year}-{ref.month:02d}"
+    last_month_key = f"{ref.year - 1}-12" if ref.month == 1 else f"{ref.year}-{ref.month - 1:02d}"
+    this_year_key = str(ref.year)
+    last_year_key = str(ref.year - 1)
 
-    def _zero():
-        return {"chats": 0, "messages": 0, "total_msgs": 0, "total_chats": 0}
-
-    buckets = {
-        "this_month": _zero(),
-        "last_month": _zero(),
-        "this_year": _zero(),
-        "last_year": _zero(),
+    result = {
+        "this_month": _compute_period_bucket(daily_records, lambda r: r["date"][:7] == this_month_key),
+        "last_month": _compute_period_bucket(daily_records, lambda r: r["date"][:7] == last_month_key),
+        "this_year": _compute_period_bucket(daily_records, lambda r: r["date"][:4] == this_year_key),
+        "last_year": _compute_period_bucket(daily_records, lambda r: r["date"][:4] == last_year_key),
     }
 
-    for r in daily_records:
-        d = r["date"]
-        m = d[:7]
-        y = d[:4]
-        for key, match_val, match_field in [
-            ("this_month", this_month, m),
-            ("last_month", last_month, m),
-            ("this_year", this_year, y),
-            ("last_year", last_year, y),
-        ]:
-            if match_field == match_val:
-                buckets[key]["chats"] += r["total_chats"]
-                buckets[key]["messages"] += r["total_messages"]
-                buckets[key]["total_msgs"] += r["total_messages"]
-                buckets[key]["total_chats"] += r["total_chats"]
-
-    result = {}
-    for key in ["this_month", "last_month", "this_year", "last_year"]:
-        b = buckets[key]
-        avg = round(b["total_msgs"] / b["total_chats"], 2) if b["total_chats"] > 0 else 0
-        result[key] = {
-            "chats": b["chats"],
-            "messages": b["messages"],
-            "avg_messages": avg,
-        }
-
-    # Pro-rata projection for current (partial) periods
     month_total_days = calendar.monthrange(ref.year, ref.month)[1]
-    month_elapsed = ref.day
     year_total_days = 366 if calendar.isleap(ref.year) else 365
     year_elapsed = (ref - date_type(ref.year, 1, 1)).days + 1
 
-    for key, elapsed, total in [
-        ("this_month", month_elapsed, month_total_days),
-        ("this_year", year_elapsed, year_total_days),
-    ]:
-        r = result[key]
-        r["elapsed_days"] = elapsed
-        r["total_days"] = total
-        factor = total / elapsed if elapsed > 0 else 1
-        r["projected_chats"] = round(r["chats"] * factor, 2)
-        r["projected_messages"] = round(r["messages"] * factor, 2)
+    _add_period_projections(result["this_month"], ref.day, month_total_days)
+    _add_period_projections(result["this_year"], year_elapsed, year_total_days)
 
     return result
 

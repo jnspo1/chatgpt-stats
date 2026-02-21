@@ -1,164 +1,50 @@
 {% extends "base.html" %}
 {% block title %}Patterns — ChatGPT Statistics{% endblock %}
 
+{% block extra_head %}
+<link rel="stylesheet" href="{{ path_prefix }}/static/patterns.css">
+{% endblock %}
+
 {% block content %}
-<style>
-.heatmap-wrap { overflow-x: auto; margin-bottom: 8px; }
-.heatmap {
-  display: grid;
-  grid-template-columns: 40px repeat(24, 1fr);
-  gap: 2px;
-  min-width: 500px;
-}
-.heatmap-label {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
-  color: var(--text-dim);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.heatmap-cell {
-  aspect-ratio: 1;
-  border-radius: 3px;
-  min-width: 14px;
-  min-height: 14px;
-  position: relative;
-  cursor: default;
-}
-.heatmap-cell:hover { outline: 1px solid var(--amber); outline-offset: -1px; }
-.heatmap-hour-labels {
-  display: grid;
-  grid-template-columns: 40px repeat(24, 1fr);
-  gap: 2px;
-  min-width: 500px;
-}
-.heatmap-hour-label {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 9px;
-  color: var(--text-muted);
-  text-align: center;
-}
-.heatmap-tooltip {
-  position: fixed;
-  background: var(--surface2);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 6px 10px;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
-  color: var(--text);
-  pointer-events: none;
-  z-index: 100;
-  white-space: nowrap;
-  display: none;
-}
-.weekday-stats {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-}
-@media (max-width: 640px) { .weekday-stats { grid-template-columns: 1fr; } }
-.weekday-stat-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 24px;
-  text-align: center;
-}
-.weekday-stat-card h3 {
-  font-size: 13px;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-dim);
-  margin-bottom: 12px;
-}
-.weekday-stat-big {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 32px;
-  font-weight: 700;
-  letter-spacing: -0.5px;
-  margin-bottom: 4px;
-}
-.weekday-stat-sub {
-  font-size: 12px;
-  color: var(--text-dim);
-  margin-bottom: 8px;
-}
-.weekday-bar-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 4px;
-  padding: 4px 0;
-}
-.weekday-bar-label {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
-  color: var(--text-dim);
-  width: 30px;
-  text-align: right;
-}
-.weekday-bar-track {
-  flex: 1;
-  height: 8px;
-  background: var(--surface2);
-  border-radius: 4px;
-  overflow: hidden;
-}
-.weekday-bar-fill {
-  height: 100%;
-  border-radius: 4px;
-  transition: width 0.4s ease;
-}
-.weekday-bar-value {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
-  color: var(--text);
-  width: 45px;
-  text-align: right;
-}
-</style>
 
 <section class="chart-section fade-in">
   <h2>Activity Heatmap</h2>
-  <div class="chart-box">
+  <figure class="chart-box">
     <h3>Messages by Day & Hour</h3>
     <div class="heatmap-wrap" id="heatmap-container"></div>
-  </div>
+  </figure>
 </section>
 
 <section class="chart-section fade-in">
   <h2>Hourly Distribution</h2>
-  <div class="chart-box">
+  <figure class="chart-box">
     <h3>Messages by Hour of Day</h3>
     <canvas id="chart-hourly" style="max-height: 300px;"></canvas>
-  </div>
+  </figure>
 </section>
 
 <section class="chart-section fade-in">
   <h2>Weekly Rhythm</h2>
-  <div class="weekday-stats" id="weekday-comparison"></div>
+  <section class="weekday-stats" id="weekday-comparison"></section>
 </section>
 
 <section class="chart-section fade-in">
   <h2>Code Analysis</h2>
-  <div class="chart-box">
+  <figure class="chart-box">
     <div id="code-stat-line" style="font-size: 13px; color: var(--text-dim); margin-bottom: 12px;"></div>
     <h3>Top Languages</h3>
     <canvas id="chart-code-languages" style="max-height: 340px;"></canvas>
-  </div>
+  </figure>
 </section>
 
 <section class="chart-section fade-in">
   <h2>Activity Overview</h2>
-  <div class="table-box" id="activity-table"></div>
+  <section class="table-box" id="activity-table"></section>
 </section>
 
 <section class="chart-section gap-table-wrap fade-in">
   <h2>Gap Analysis</h2>
-  <div class="table-box" id="gaps-table"></div>
+  <section class="table-box" id="gaps-table"></section>
 </section>
 
 <div class="heatmap-tooltip" id="heatmap-tooltip"></div>
@@ -174,61 +60,28 @@
   const FULL_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
   const HOUR_LABELS = [0, 3, 6, 9, 12, 15, 18, 21];
 
-  /**
-   * Return a CSS colour string for a heatmap cell based on its value.
-   * @param {number} val   - Message count for the cell.
-   * @param {number} maxVal - Maximum count across all cells (used for ratio).
-   * @returns {string} CSS colour value.
-   */
+  /** @param {number} val @param {number} maxVal @returns {string} CSS colour */
   function cellColor(val, maxVal) {
     if (val === 0 || maxVal === 0) return 'var(--surface2)';
     const ratio = val / maxVal;
-    if (ratio < 0.25) return 'rgba(229, 165, 75, 0.2)';
-    if (ratio < 0.50) return 'rgba(229, 165, 75, 0.5)';
-    if (ratio < 0.75) return 'rgba(229, 165, 75, 0.8)';
+    if (ratio < 0.25) return cssAlpha('--amber', 0.2);
+    if (ratio < 0.50) return cssAlpha('--amber', 0.5);
+    if (ratio < 0.75) return cssAlpha('--amber', 0.8);
     return 'var(--amber)';
   }
 
   /**
-   * Build the 7x24 activity heatmap grid with hour labels, tooltip
-   * interactions, and ARIA attributes for accessibility.
-   * Reads from D.hourly.heatmap (7 arrays of 24 integers).
+   * Build the 7x24 heatmap grid with row labels and ARIA cells.
+   * @param {number[][]} heatmap @param {number} maxVal @returns {HTMLElement}
    */
-  function buildHeatmap() {
-    const heatmap = D.hourly.heatmap;
-    if (!heatmap || heatmap.length !== 7) return;
-
-    const container = document.getElementById('heatmap-container');
-    const tooltip = document.getElementById('heatmap-tooltip');
-
-    // Find max value for intensity scaling
-    let maxVal = 0;
-    for (let d = 0; d < 7; d++) {
-      for (let h = 0; h < 24; h++) {
-        if (heatmap[d][h] > maxVal) maxVal = heatmap[d][h];
-      }
-    }
-
-    // Hour labels row
-    const hourRow = el('div', { className: 'heatmap-hour-labels' });
-    hourRow.appendChild(el('div')); // empty spacer for row label column
-    for (let h = 0; h < 24; h++) {
-      const lbl = el('div', { className: 'heatmap-hour-label' });
-      if (HOUR_LABELS.indexOf(h) >= 0) lbl.textContent = String(h);
-      hourRow.appendChild(lbl);
-    }
-    container.appendChild(hourRow);
-
-    // Grid rows
+  function buildHeatmapGrid(heatmap, maxVal) {
     const grid = el('div', { className: 'heatmap' });
     grid.setAttribute('role', 'grid');
     grid.setAttribute('aria-label', 'Activity heatmap showing messages by day and hour');
     for (let d = 0; d < 7; d++) {
-      // Row label
       const rowLabel = el('div', { className: 'heatmap-label', textContent: DAYS[d] });
       rowLabel.setAttribute('role', 'row');
       grid.appendChild(rowLabel);
-      // Cells
       for (let h = 0; h < 24; h++) {
         const val = heatmap[d][h];
         const cell = el('div', { className: 'heatmap-cell' });
@@ -242,18 +95,18 @@
         grid.appendChild(cell);
       }
     }
-    container.appendChild(grid);
+    return grid;
+  }
 
-    // Tooltip on hover
+  /** Attach hover tooltip listeners. @param {HTMLElement} grid @param {HTMLElement} tooltip */
+  function attachHeatmapTooltip(grid, tooltip) {
     grid.addEventListener('mouseover', function(e) {
       const cell = e.target;
       if (!cell.classList.contains('heatmap-cell')) return;
-      const day = cell.getAttribute('data-day');
-      const hour = cell.getAttribute('data-hour');
-      const count = cell.getAttribute('data-count');
-      const hourNum = parseInt(hour, 10);
+      const hourNum = parseInt(cell.getAttribute('data-hour'), 10);
       const label = `${hourNum < 10 ? '0' : ''}${hourNum}:00`;
-      tooltip.textContent = `${day} ${label} \u2014 ${parseInt(count, 10).toLocaleString()} msgs`;
+      const count = parseInt(cell.getAttribute('data-count'), 10);
+      tooltip.textContent = `${cell.getAttribute('data-day')} ${label} \u2014 ${count.toLocaleString()} msgs`;
       tooltip.style.display = 'block';
     });
     grid.addEventListener('mousemove', function(e) {
@@ -266,20 +119,39 @@
     });
   }
 
-  /**
-   * Build the weekday-vs-weekend comparison cards showing totals,
-   * averages, per-day bar charts, and the weekday/weekend ratio.
-   * Reads from D.hourly.weekday_totals (array of 7 integers, Mon-Sun).
-   */
+  /** Build the 7x24 activity heatmap with hour labels and tooltip. */
+  function buildHeatmap() {
+    const heatmap = D.hourly.heatmap;
+    if (!heatmap || heatmap.length !== 7) return;
+    const container = document.getElementById('heatmap-container');
+    const tooltip = document.getElementById('heatmap-tooltip');
+    // Find max value for intensity scaling
+    let maxVal = 0;
+    for (let d = 0; d < 7; d++) {
+      for (let h = 0; h < 24; h++) {
+        if (heatmap[d][h] > maxVal) maxVal = heatmap[d][h];
+      }
+    }
+    // Hour labels row
+    const hourRow = el('div', { className: 'heatmap-hour-labels' });
+    hourRow.appendChild(el('div')); // spacer for row label column
+    for (let h = 0; h < 24; h++) {
+      const lbl = el('div', { className: 'heatmap-hour-label' });
+      if (HOUR_LABELS.indexOf(h) >= 0) lbl.textContent = String(h);
+      hourRow.appendChild(lbl);
+    }
+    container.appendChild(hourRow);
+    const grid = buildHeatmapGrid(heatmap, maxVal);
+    container.appendChild(grid);
+    attachHeatmapTooltip(grid, tooltip);
+  }
+
+  /** Build weekday-vs-weekend comparison cards with per-day bars. */
   function buildWeekdayCards() {
     const weekdayTotals = D.hourly.weekday_totals;
     if (!weekdayTotals || weekdayTotals.length !== 7) return;
-
     const compContainer = document.getElementById('weekday-comparison');
-
-    let weekdaySum = 0;
-    let weekendSum = 0;
-    let maxDay = 0;
+    let weekdaySum = 0, weekendSum = 0, maxDay = 0;
     for (let i = 0; i < 7; i++) {
       if (i < 5) weekdaySum += weekdayTotals[i];
       else weekendSum += weekdayTotals[i];
@@ -290,17 +162,7 @@
     const weekendAvg = Math.round(weekendSum / 2);
     const ratio = weekendAvg > 0 ? (weekdayAvg / weekendAvg).toFixed(2) : '\u2014';
 
-    /**
-     * Create a stat card with header, big number, subtitle lines, and
-     * per-day bar rows for the given day range.
-     * @param {string} title    - Card heading text.
-     * @param {number} sum      - Total messages for the group.
-     * @param {number} avg      - Average messages per day.
-     * @param {number} startIdx - First index in weekdayTotals (inclusive).
-     * @param {number} endIdx   - Last index in weekdayTotals (exclusive).
-     * @param {string} colour   - CSS variable for the accent colour.
-     * @returns {HTMLElement} The complete card element.
-     */
+    /** Create a stat card with big number, subtitle, and per-day bars. @returns {HTMLElement} */
     function createCard(title, sum, avg, startIdx, endIdx, colour) {
       const card = el('div', { className: 'weekday-stat-card' });
       card.appendChild(txt('h3', title));
@@ -334,17 +196,12 @@
     compContainer.appendChild(weCard);
   }
 
-  /**
-   * Build the hourly distribution horizontal bar chart.
-   * Reads from D.hourly.hourly_totals (array of 24 integers).
-   */
+  /** Build the hourly distribution horizontal bar chart. */
   function buildHourlyChart() {
     const hourlyTotals = D.hourly.hourly_totals;
     if (!hourlyTotals || hourlyTotals.length !== 24) return;
-
     const labels = [];
     for (let i = 0; i < 24; i++) labels.push(`${i}:00`);
-
     const ctx = document.getElementById('chart-hourly').getContext('2d');
     new Chart(ctx, {
       type: 'bar',
@@ -353,7 +210,7 @@
         datasets: [{
           label: 'Messages',
           data: hourlyTotals,
-          backgroundColor: 'rgba(108, 180, 217, 0.7)',
+          backgroundColor: cssAlpha('--skyblue', 0.7),
           borderWidth: 0,
           barPercentage: 0.85,
           categoryPercentage: 0.9,
@@ -366,8 +223,8 @@
         plugins: {
           legend: { display: false },
           tooltip: {
-            backgroundColor: '#1e2029',
-            borderColor: '#2a2d3a',
+            backgroundColor: cssVar('--surface2'),
+            borderColor: cssVar('--border'),
             borderWidth: 1,
             bodyFont: { size: 12 },
             padding: 10,
@@ -377,23 +234,19 @@
           },
         },
         scales: {
-          x: { beginAtZero: true, grid: { color: '#1e2029' }, ticks: { precision: 0 } },
+          x: { beginAtZero: true, grid: { color: cssVar('--surface2') }, ticks: { precision: 0 } },
           y: { grid: { display: false }, ticks: { font: { family: "'JetBrains Mono', monospace", size: 10 } } },
         },
       },
     });
   }
 
-  /**
-   * Build the code languages horizontal bar chart and summary line.
-   * Reads from D.code_stats (object with language_counts array).
-   */
+  /** Build the code languages horizontal bar chart and summary line. */
   function buildCodeLanguagesChart() {
     const codeStats = D.code_stats;
     if (codeStats && codeStats.language_counts && codeStats.language_counts.length) {
       const statLine = document.getElementById('code-stat-line');
       statLine.textContent = `${codeStats.pct_with_code}% of conversations include code blocks (${codeStats.total_conversations_with_code.toLocaleString()} conversations)`;
-
       const top10 = codeStats.language_counts.slice(0, 10);
       const langLabels = top10.map(function(l) { return l.language; });
       const langCounts = top10.map(function(l) { return l.count; });
@@ -406,7 +259,7 @@
           datasets: [{
             label: 'Conversations',
             data: langCounts,
-            backgroundColor: 'rgba(229,165,75,0.7)',
+            backgroundColor: cssAlpha('--amber', 0.7),
             borderWidth: 0,
             barPercentage: 0.7,
             categoryPercentage: 0.85,
@@ -419,7 +272,7 @@
           plugins: {
             legend: { display: false },
             tooltip: {
-              backgroundColor: '#1e2029', borderColor: '#2a2d3a', borderWidth: 1,
+              backgroundColor: cssVar('--surface2'), borderColor: cssVar('--border'), borderWidth: 1,
               bodyFont: { size: 12 }, padding: 10,
               callbacks: {
                 label: function(c) { return `${c.parsed.x.toLocaleString()} conversations`; }
@@ -427,7 +280,7 @@
             },
           },
           scales: {
-            x: { beginAtZero: true, grid: { color: '#1e2029' }, ticks: { precision: 0 } },
+            x: { beginAtZero: true, grid: { color: cssVar('--surface2') }, ticks: { precision: 0 } },
             y: { grid: { display: false }, ticks: { font: { family: "'JetBrains Mono', monospace", size: 11 } } },
           },
         },
@@ -438,14 +291,10 @@
     }
   }
 
-  /**
-   * Build the activity-by-year overview table.
-   * Reads from D.activity_by_year (array of year summary objects).
-   */
+  /** Build the activity-by-year overview table. */
   function buildActivityTable() {
     const activityData = D.activity_by_year;
     if (!activityData || !activityData.length) return;
-
     const actEl = document.getElementById('activity-table');
     const tbl = document.createElement('table');
     const th = document.createElement('thead');
@@ -463,7 +312,6 @@
       const tr = document.createElement('tr');
       const isOverall = row.year === 'Overall';
       if (isOverall) tr.style.fontWeight = '700';
-
       const yearTd = txt('td', row.year);
       if (isOverall) yearTd.style.color = 'var(--amber)';
       tr.appendChild(yearTd);
@@ -478,18 +326,86 @@
     actEl.appendChild(tbl);
   }
 
-  /**
-   * Build the gap analysis table with year-filter pill bar and
-   * re-renderable rows. Reads from D.gaps and D.gap_stats.
-   */
+  /** Filter gaps by start year. @param {Object[]} gaps @param {string[]} years @returns {Object[]} */
+  function filterGapsByYear(gaps, years) {
+    if (years.indexOf('All') >= 0 || years.length === 0) return gaps;
+    return gaps.filter(function(g) {
+      return years.indexOf(g.start_timestamp.substring(0, 4)) >= 0;
+    });
+  }
+
+  /** Re-render gap rows. @param {HTMLElement} tbody @param {Object[]} gaps @param {string[]} years @param {number} limit */
+  function renderGapTableRows(tbody, gaps, years, limit) {
+    clearChildren(tbody);
+    filterGapsByYear(gaps, years).slice(0, limit).forEach(function(g, i) {
+      const tr = document.createElement('tr');
+      tr.appendChild(txt('td', String(i + 1), 'rank'));
+      tr.appendChild(txt('td', formatDate(g.start_timestamp), 'date'));
+      tr.appendChild(txt('td', formatDate(g.end_timestamp)));
+      tr.appendChild(txt('td', g.length_days.toFixed(1), 'num'));
+      tbody.appendChild(tr);
+    });
+  }
+
+  /** Build multi-select year pill bar. @param {HTMLElement} container @param {string[]} years @param {function} onFilterChange */
+  function buildGapPillBar(container, years, onFilterChange) {
+    const pillBar = el('div', { className: 'pill-bar' });
+    let allGapPill = null;
+    function getSelected() {
+      const selected = [];
+      pillBar.querySelectorAll('.pill').forEach(function(p) {
+        if (p.classList.contains('active') && p.textContent !== 'All') selected.push(p.textContent);
+      });
+      return selected;
+    }
+    function syncAllPill() {
+      const yearPills = pillBar.querySelectorAll('.pill:not([data-all])');
+      let allActive = true;
+      yearPills.forEach(function(p) { if (!p.classList.contains('active')) allActive = false; });
+      if (allActive || getSelected().length === 0) {
+        allGapPill.classList.add('active');
+        yearPills.forEach(function(p) { p.classList.add('active'); });
+      } else {
+        allGapPill.classList.remove('active');
+      }
+    }
+    years.forEach(function(yr) {
+      const pill = txt('button', yr, 'pill active');
+      pill.type = 'button';
+      if (yr === 'All') {
+        pill.setAttribute('data-all', 'true');
+        allGapPill = pill;
+        pill.addEventListener('click', function() {
+          pillBar.querySelectorAll('.pill').forEach(function(p) { p.classList.add('active'); });
+          onFilterChange(['All']);
+        });
+      } else {
+        pill.addEventListener('click', function() {
+          pill.classList.toggle('active');
+          const selected = getSelected();
+          if (selected.length === 0) {
+            allGapPill.classList.add('active');
+            pillBar.querySelectorAll('.pill:not([data-all])').forEach(function(p) { p.classList.add('active'); });
+            onFilterChange(['All']);
+          } else {
+            syncAllPill();
+            onFilterChange(selected);
+          }
+        });
+      }
+      pillBar.appendChild(pill);
+    });
+    container.appendChild(pillBar);
+  }
+
+  /** Build the gap analysis table with year-filter pills. */
   function buildGapTable() {
+    if (!D.gaps || !D.gaps.length) return;
     const gs = D.gap_stats || {};
     const gapsEl = document.getElementById('gaps-table');
     const TOP_GAPS_LIMIT = 20;
-    let selectedGapYears = ['All'];
-
-    if (!D.gaps || !D.gaps.length) return;
-
+    let selectedYears = ['All'];
+    // Title
     const titleEl = txt('h3', 'Longest Gaps');
     if (gs.proportion_inactive) {
       const pctSpan = document.createElement('span');
@@ -500,77 +416,12 @@
       titleEl.appendChild(pctSpan);
     }
     gapsEl.appendChild(titleEl);
-
-    // Auto-detect years from gap data
+    // Year pills
     const gapYearSet = {};
     D.gaps.forEach(function(g) { gapYearSet[g.start_timestamp.substring(0, 4)] = true; });
     const gapYears = ['All'];
     Object.keys(gapYearSet).sort().forEach(function(y) { gapYears.push(y); });
-
-    // Pill bar (multi-select)
-    const pillBar = el('div', { className: 'pill-bar' });
-    let allGapPill = null;
-
-    /**
-     * Collect text content of all active year pills (excluding "All").
-     * @returns {string[]} Array of active year strings.
-     */
-    function getSelectedGapYears() {
-      const selected = [];
-      pillBar.querySelectorAll('.pill').forEach(function(p) {
-        if (p.classList.contains('active') && p.textContent !== 'All') {
-          selected.push(p.textContent);
-        }
-      });
-      return selected;
-    }
-
-    /**
-     * Synchronise the "All" pill state: activate it when every year
-     * pill is active or none are; deactivate it otherwise.
-     */
-    function syncGapAllPill() {
-      const yearPills = pillBar.querySelectorAll('.pill:not([data-all])');
-      let allActive = true;
-      yearPills.forEach(function(p) { if (!p.classList.contains('active')) allActive = false; });
-      if (allActive || getSelectedGapYears().length === 0) {
-        allGapPill.classList.add('active');
-        yearPills.forEach(function(p) { p.classList.add('active'); });
-      } else {
-        allGapPill.classList.remove('active');
-      }
-    }
-
-    gapYears.forEach(function(yr) {
-      const pill = txt('button', yr, 'pill active');
-      pill.type = 'button';
-      if (yr === 'All') {
-        pill.setAttribute('data-all', 'true');
-        allGapPill = pill;
-        pill.addEventListener('click', function() {
-          pillBar.querySelectorAll('.pill').forEach(function(p) { p.classList.add('active'); });
-          selectedGapYears = ['All'];
-          renderGapRows();
-        });
-      } else {
-        pill.addEventListener('click', function() {
-          pill.classList.toggle('active');
-          const selected = getSelectedGapYears();
-          if (selected.length === 0) {
-            allGapPill.classList.add('active');
-            pillBar.querySelectorAll('.pill:not([data-all])').forEach(function(p) { p.classList.add('active'); });
-            selectedGapYears = ['All'];
-          } else {
-            syncGapAllPill();
-            selectedGapYears = selected;
-          }
-          renderGapRows();
-        });
-      }
-      pillBar.appendChild(pill);
-    });
-    gapsEl.appendChild(pillBar);
-
+    // Table structure
     const table = document.createElement('table');
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
@@ -580,64 +431,25 @@
     headerRow.appendChild(txt('th', 'Days', 'num-col'));
     thead.appendChild(headerRow);
     table.appendChild(thead);
-
     const gapTbody = document.createElement('tbody');
     table.appendChild(gapTbody);
+    // Pill bar with callback
+    buildGapPillBar(gapsEl, gapYears, function(years) {
+      selectedYears = years;
+      renderGapTableRows(gapTbody, D.gaps, selectedYears, TOP_GAPS_LIMIT);
+    });
     gapsEl.appendChild(table);
-
-    /**
-     * Filter gap entries to only those whose start year is in the
-     * selected set. Returns all gaps when "All" is selected.
-     * @param {Object[]} gaps  - Full array of gap objects.
-     * @param {string[]} years - Selected year strings (or ['All']).
-     * @returns {Object[]} Filtered gap array.
-     */
-    function filterGapsByYear(gaps, years) {
-      if (years.indexOf('All') >= 0 || years.length === 0) return gaps;
-      return gaps.filter(function(g) {
-        return years.indexOf(g.start_timestamp.substring(0, 4)) >= 0;
-      });
-    }
-
-    /**
-     * Clear and re-render the gap table body based on the current
-     * year filter selection, limited to TOP_GAPS_LIMIT rows.
-     */
-    function renderGapRows() {
-      clearChildren(gapTbody);
-      const filtered = filterGapsByYear(D.gaps, selectedGapYears).slice(0, TOP_GAPS_LIMIT);
-      filtered.forEach(function(g, i) {
-        const tr = document.createElement('tr');
-        tr.appendChild(txt('td', String(i + 1), 'rank'));
-        tr.appendChild(txt('td', formatDate(g.start_timestamp), 'date'));
-        tr.appendChild(txt('td', formatDate(g.end_timestamp)));
-        tr.appendChild(txt('td', g.length_days.toFixed(1), 'num'));
-        gapTbody.appendChild(tr);
-      });
-    }
-
-    renderGapRows();
+    renderGapTableRows(gapTbody, D.gaps, selectedYears, TOP_GAPS_LIMIT);
   }
 
-  // ── 1. Activity Heatmap ──
+  // ── Initialise all sections ──
   buildHeatmap();
-
-  // ── 2. Hourly Bar Chart ──
   applyChartDefaults();
   buildHourlyChart();
-
-  // ── 3. Weekday vs Weekend ──
   buildWeekdayCards();
-
-  // ── 4. Code Languages Chart ──
   buildCodeLanguagesChart();
-
-  // ── 5. Activity Overview Table ──
   buildActivityTable();
-
-  // ── 6. Gap Analysis Table ──
   buildGapTable();
-
 })();
 </script>
 {% endblock %}

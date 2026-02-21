@@ -11,34 +11,105 @@ from fastapi.testclient import TestClient
 # ── Minimal dashboard payload for app.py tests ──
 
 
+def _empty_content_metric() -> dict:
+    """Return an empty content metric series (values + rolling averages)."""
+    return {"values": [], "avg_7d": [], "avg_28d": []}
+
+
+def _empty_chart_series() -> dict:
+    """Return an empty chart series (values + rolling + lifetime averages)."""
+    return {"values": [], "avg_7d": [], "avg_28d": [], "avg_lifetime": []}
+
+
 def _minimal_dashboard_payload() -> dict:
-    """Return a minimal payload matching build_dashboard_payload() shape."""
+    """Return a minimal payload matching build_dashboard_payload() shape.
+
+    Keys and structure must exactly match the dict returned by
+    ``analytics.build_dashboard_payload``.
+    """
     return {
         "generated_at": "2024-01-15T12:00:00",
         "summary": {
-            "total_conversations": 10,
             "total_messages": 50,
-            "date_range": {"first": "2024-01-01", "last": "2024-01-15"},
-            "daily_avg_conversations": 0.7,
-            "daily_avg_messages": 3.3,
-            "avg_messages_per_conversation": 5.0,
-            "total_words": 1000,
-            "total_code_blocks": 5,
-            "avg_words_per_message": 20.0,
-            "code_block_percentage": 10.0,
+            "total_chats": 10,
+            "first_date": "2024-01-01",
+            "last_date": "2024-01-15",
+            "years_span": 0.04,
+            "top_days_by_chats": [],
+            "top_days_by_messages": [],
         },
-        "chart": {"labels": [], "conversations": [], "messages": []},
-        "monthly": {"labels": [], "conversations": [], "messages": []},
-        "weekly": {"labels": [], "conversations": [], "messages": []},
-        "hourly": {"labels": list(range(24)), "counts": [0] * 24},
-        "content_chart": {"labels": [], "words": [], "code_blocks": []},
-        "content_monthly": {"labels": [], "words": [], "code_blocks": []},
-        "content_weekly": {"labels": [], "words": [], "code_blocks": []},
-        "code_stats": {"total_code_blocks": 0, "languages": {}},
+        "charts": {
+            "dates": [],
+            "chats": _empty_chart_series(),
+            "avg_messages": _empty_chart_series(),
+            "total_messages": _empty_chart_series(),
+        },
+        "gaps": [],
+        "gap_stats": {
+            "total_days": 0,
+            "days_active": 0,
+            "days_inactive": 0,
+            "proportion_inactive": 0.0,
+            "longest_gap": None,
+        },
+        "monthly": {
+            "months": [], "chats": [], "messages": [],
+            "avg_messages": [], "chats_avg_3m": [], "messages_avg_3m": [],
+        },
+        "weekly": {
+            "weeks": [], "chats": [], "messages": [], "avg_messages": [],
+            "chats_avg_4w": [], "chats_avg_12w": [],
+            "messages_avg_4w": [], "messages_avg_12w": [],
+            "avg_messages_avg_4w": [], "avg_messages_avg_12w": [],
+        },
+        "hourly": {
+            "heatmap": [[0] * 24 for _ in range(7)],
+            "hourly_totals": [0] * 24,
+            "weekday_totals": [0] * 7,
+        },
         "length_distribution": {"buckets": [], "counts": []},
-        "period_comparison": {"current": {}, "previous": {}},
-        "gap_analysis": [],
-        "activity_by_year": {},
+        "comparison": {
+            "this_month": {"chats": 0, "messages": 0, "avg_messages": 0},
+            "last_month": {"chats": 0, "messages": 0, "avg_messages": 0},
+            "this_year": {"chats": 0, "messages": 0, "avg_messages": 0},
+            "last_year": {"chats": 0, "messages": 0, "avg_messages": 0},
+        },
+        "activity_by_year": [],
+        "content_charts": {
+            "dates": [],
+            "avg_user_words": _empty_content_metric(),
+            "avg_asst_words": _empty_content_metric(),
+            "response_ratio": _empty_content_metric(),
+            "code_pct_user": _empty_content_metric(),
+            "code_pct_asst": _empty_content_metric(),
+        },
+        "content_weekly": {
+            "weeks": [],
+            "avg_user_words": _empty_content_metric(),
+            "avg_asst_words": _empty_content_metric(),
+            "response_ratio": _empty_content_metric(),
+            "code_pct_user": _empty_content_metric(),
+            "code_pct_asst": _empty_content_metric(),
+        },
+        "content_monthly": {
+            "months": [],
+            "avg_user_words": _empty_content_metric(),
+            "avg_asst_words": _empty_content_metric(),
+            "response_ratio": _empty_content_metric(),
+            "code_pct_user": _empty_content_metric(),
+            "code_pct_asst": _empty_content_metric(),
+        },
+        "code_stats": {
+            "total_conversations_with_code": 0,
+            "pct_with_code": 0.0,
+            "language_counts": [],
+        },
+        "content_summary": {
+            "avg_user_words": 0,
+            "avg_asst_words": 0,
+            "avg_response_ratio": 0,
+            "pct_conversations_with_code": 0.0,
+        },
     }
 
 
